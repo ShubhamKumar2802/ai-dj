@@ -28,6 +28,8 @@ This project is spec-driven. Before implementing any module, write or update its
 - No implementation without a spec to implement.
 - If behavior needs to change — whether the change is decided before coding or discovered during/after implementation (code review, bug fix, design rethink) — edit the spec first, then bring the code in line. Never let code and spec drift silently.
 
+Naming, storage, and amendment/versioning rules: see `resources/documentation/README.md`, or invoke the `write-spec` skill.
+
 ## Intended architecture
 
 AI DJ Mixer: given a set of tracks, produce a single continuous **hook-cut megamix** (reference: ~15 tracks in ~17 minutes, not a long-blend club set). Three stages, split by iteration cost rather than by concept:

@@ -8,3 +8,17 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# Claude Code — personal/machine-specific, never shared
+.claude/settings.local.json
+
+# Secrets
+.env
+.env.*
+
+# macOS
+.DS_Store
