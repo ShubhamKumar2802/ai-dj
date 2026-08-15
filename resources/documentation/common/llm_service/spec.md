@@ -80,12 +80,18 @@ invalid states (e.g. an empty `images` list masquerading as multimodal) unrepres
 
 ```
 LLMRequest (abstract base — never instantiated directly):
-  model        : str | None      # override; None = factory default model
-  temperature  : float | None    # None = provider default; range [0, 2] if set
-  max_tokens   : int | None      # None = provider default; must be > 0 if set
-  timeout_s    : float | None    # None = service default
-  metadata     : dict[str, str]  # consumer name / purpose tag, for logging only —
-                                  # never sent to the provider
+  model          : str | None      # override; None = factory default model
+  temperature    : float | None    # None = provider default; range [0, 2] if set
+  max_tokens     : int | None      # None = provider default; must be > 0 if set
+  timeout_s      : float | None    # None = service default
+  metadata       : dict[str, str]  # consumer name / purpose tag, for logging only —
+                                    # never sent to the provider
+  prompt_version : str | None      # set by PromptManager when it renders a template
+                                    # (§4); the explicit, typed carrier for the
+                                    # `prompt_version` component of the cache key
+                                    # (§9) — kept separate from `metadata` because it
+                                    # has a real consumer (the cache key), not just
+                                    # logging
 
 TextRequest(LLMRequest):
   prompt       : str               # fully rendered by PromptManager (§4) — no
@@ -152,8 +158,9 @@ never hand-format strings.
 - **Load** — templates live as files under `prompts/` (one per prompt, e.g.
   `prompts/familiarity_score.txt`), read by name.
 - **Render** — placeholder substitution for dynamic inputs (e.g. `{title}`, `{film}`,
-  `{year}`, `{artist}`) → a finished prompt string, handed to
-  `TextRequest`/`MultimodalRequest`.
+  `{year}`, `{artist}`) → a finished prompt string *and* that template's version,
+  both handed to the caller, which attaches them as `TextRequest.prompt` /
+  `.prompt_version` (or `MultimodalRequest`'s) — not two separate lookups.
 - **Version** — each template's version is the canonical source for the
   `prompt_version` used in the cache key (§7) — not a separately hand-tracked
   constant. Reload/hot-swap during development is a `PromptManager` concern, not
@@ -164,28 +171,78 @@ never hand-format strings.
 ## 6. Factory & composition (`factory.py`)
 
 ```
-LLMServiceConfig:
-  provider          : "opencode_zen"   # v1: only value; extensible enum later
-  model             : str              # default model id (a free OpenCode Zen model)
-  base_url          : str              # default "https://opencode.ai/zen/v1"
-  api_key           : str              # from env — never hardcoded, never logged
-  max_concurrency   : int              # default cap for generate_batch (§8)
-  request_timeout_s : float            # default per-call timeout
-  cache_enabled     : bool             # default True
+LLMServiceConfig — every field required, none of them defaulted in Python:
+  provider          : str              # a provider registry key (see below) —
+                                        # "opencode_zen" is the only one registered
+                                        # in v1, but this is a lookup, not a fixed
+                                        # choice
+  model             : str              # a free OpenCode Zen model id
+  base_url          : str              # e.g. "https://opencode.ai/zen/v1"
+  api_key           : str              # credential — never hardcoded, never logged
+  max_concurrency   : int              # cap for generate_batch (§8)
+  request_timeout_s : float            # per-call timeout
+  cache_enabled     : bool
+  cache_dir         : str              # where CachingLLMService persists responses (§9)
 
-get_llm_service(config: LLMServiceConfig) -> LLMService
+get_llm_service(config: LLMServiceConfig | None = None) -> LLMService
 ```
+
+**`config.yaml` is the only place a default value for these fields is declared** —
+`LLMServiceConfig` itself declares none. Two places for the same default (a Python
+fallback *and* a YAML value) is exactly the kind of drift this spec's own invariants
+elsewhere warn against; there is exactly one place to change, say, the default
+`max_concurrency`, not two.
+
+`config` is optional — when omitted, `get_llm_service()` loads it itself: `api_key`
+from the `OPEN_CODE_ZEN_API_KEY` environment variable (`.env`, credentials only, never
+committed), everything else from a committed `config.yaml` at the repo root, under a
+top-level `llm_service:` key (sibling keys for other modules' config, e.g. `logging:`,
+are expected as the codebase grows) — every one of those keys must be present, since
+nothing defaults. Passing `config` explicitly — as any consumer's test does — bypasses
+both files entirely, but must still supply every field.
+
+**Provider selection is a registry lookup, not a hardcoded call.**
+`providers/registry.py` maps a provider name to a *factory function*
+(`LLMServiceConfig -> LLMService`), not directly to a class — a class-keyed registry
+would force every future provider to accept the exact same constructor kwargs as
+`OpenAICompatibleLLMService`, a real constraint the moment a non-OpenAI-compatible
+provider shows up with a different shape. `get_llm_service()` resolves the concrete
+provider with `get_provider_factory(config.provider)(config)` instead of naming a
+class directly.
+
+```
+ProviderFactory = Callable[[LLMServiceConfig], LLMService]
+
+register_provider(name: str, factory: ProviderFactory, *, overwrite: bool = False) -> None
+  # raises if name is already registered and overwrite=False — guards against a
+  # stray re-registration silently clobbering a real provider
+
+get_provider_factory(name: str) -> ProviderFactory
+  # raises, listing what *is* registered, if name isn't found
+```
+
+Two ways to add a provider:
+1. **Built-in** — a new file under `providers/`, defining a factory function and
+   calling `register_provider(name, factory_fn)` at module level; add the module to
+   `providers/__init__.py`'s import list so importing the package registers every
+   built-in provider as a side effect (`OpenAICompatibleLLMService` registers itself
+   under `"opencode_zen"` this way — §7).
+2. **External** — any caller can call `register_provider()` directly before
+   `get_llm_service()`, with no edit to this module at all.
 
 **Composition happens here, as decorators, in a fixed order:**
 
 ```
-LoggingLLMService(CachingLLMService(LangChainLLMService(config)))
+CachingLLMService(LoggingLLMService(OpenAICompatibleLLMService(config)))
 ```
 
-Logging outermost so it sees every request including cache hits; caching sits between
-logging and the real provider call so only actual cache misses reach the network.
-`LangChainLLMService` (§7) never needs to know caching or logging exist — each
-concern is a plain `LLMService` wrapping another `LLMService`.
+Caching outermost, logging in the middle: a cache hit short-circuits before reaching
+`LoggingLLMService` at all, which is correct, not a gap — a hit did no work worth
+logging (no latency, no cost, no provider call happened). `LoggingLLMService` only
+ever sees real calls that actually reached (or attempted to reach) the provider, which
+is exactly the set of events worth a log line. `OpenAICompatibleLLMService` (§7) never needs
+to know caching or logging exist — each concern is a plain `LLMService` wrapping
+another `LLMService`.
 
 **Singleton — memoized by config, not a raw global.** `get_llm_service()` caches the
 constructed (already-decorated) instance keyed on the resolved config, so the
@@ -197,16 +254,25 @@ default.
 
 ---
 
-## 7. Concrete implementation — `LangChainLLMService` (`langchain_impl.py`)
+## 7. Concrete implementation — `OpenAICompatibleLLMService` (`providers/openai_compatible.py`)
 
 Extends `BaseLLMService` (§8) and implements only `generate()` — `generate_batch()`
 comes free from the base class's bounded-concurrency default. Wraps LangChain's
-`ChatOpenAI` pointed at OpenCode Zen via `base_url`/`api_key`.
+`ChatOpenAI` pointed at OpenCode Zen via `base_url`/`api_key`. Registers itself in
+`providers/registry.py` (§6) under the name `"opencode_zen"` at module level.
 
 - Dispatches `TextRequest` → plain message content; `MultimodalRequest` → LangChain's
   multi-part message content (text block + image blocks).
-- Uses `with_structured_output(output_schema)` per call so the schema is enforced at
-  the LangChain layer, not hand-parsed JSON.
+- Uses `with_structured_output(output_schema, method="function_calling")` per call so
+  the schema is enforced at the LangChain layer, not hand-parsed JSON.
+  `method="function_calling"` is deliberate, not the default: LangChain's default
+  (`"json_schema"`) is OpenAI's newer strict `response_format` mode, which most models
+  proxied through an OpenAI-compatible gateway don't support — confirmed against a
+  live call (`invalid_request_error: This response_format type is unavailable now`).
+  Tool/function calling is the older, far more broadly compatible mechanism. (Not
+  every model tolerates *that* either — a reasoning/"thinking" model can reject the
+  forced `tool_choice` function-calling requires; that's a model-capability limit, not
+  something this layer can paper over.)
 - **Pydantic validation at both boundaries**: the request (`TextRequest` /
   `MultimodalRequest`) is validated at construction time, before any call is made;
   the response is validated against `output_schema` on the way back out. A response
@@ -221,11 +287,22 @@ comes free from the base class's bounded-concurrency default. Wraps LangChain's
 
 `BaseLLMService.generate_batch()` dispatches independent, idempotent, cacheable calls
 — exactly what familiarity scoring is: N tracks, no ordering dependency between them
-— with a **capped concurrency** (async + semaphore, or a small thread pool;
-implementation detail, not exposed to consumers) sized to `config.max_concurrency`,
-plus per-call retry/backoff on transient provider errors. Because it's implemented
-once on the base class, `LangChainLLMService` and any future concrete implementation
-get it for free by implementing only `generate()`.
+— with a **capped concurrency** (a persistent `ThreadPoolExecutor`, sized to
+`config.max_concurrency`, created once and reused — not spun up per call) not exposed
+to consumers. Because it's implemented once on the base class, `OpenAICompatibleLLMService`
+and any future concrete implementation get it for free by implementing only
+`generate()`.
+
+**Retry/backoff lives at the point of the actual provider call, not only in the batch
+path.** `BaseLLMService` exposes a `_call_with_retry()` helper (3 attempts,
+exponential backoff: 0.5s / 1s / 2s) that a concrete implementation's `generate()`
+wraps its provider call in. This means a bare single `generate()` call retries exactly
+like a call made through `generate_batch()` — retry is a property of "making a
+provider call," not of the batching mechanism, so it can't be lost depending on which
+entry point a consumer happens to use. Only `LLMProviderError`-shaped failures
+(network/API) retry; `LLMValidationError` (bad structured-output parse) never retries
+automatically — the same bad input tends to reproduce the same bad output, and §7
+already treats it as a distinct failure mode with distinct causes.
 
 **No Prefect (or similar orchestrator).** That class of tool earns its cost when
 there's a multi-step DAG with cross-step dependencies, scheduling, or a need for a
@@ -249,10 +326,24 @@ key on `hash(request_payload, output_schema_name, model_id, prompt_version)`, wh
 content-hash cache — nothing here is audio-keyed; this cache is keyed on the
 identifying text fields and the prompt/model that produced the response.
 
-**Logging/observability — `LoggingLLMService` (`observability.py`).** Every call
-logged once, centrally: consumer name (from `LLMRequest.metadata`), model, latency,
-cache hit/miss, token count if available. The reason this belongs in `llm_service`
-rather than each consumer reimplementing it.
+**Storage: disk-backed, one JSON file per cache key**, under
+`LLMServiceConfig.cache_dir` (§6) — one file named `<key>.json` holding the response's
+`model_dump()`. Not in-memory-only: OpenCode Zen calls are meant to be "cached
+forever" per design doc §6.1, so a cache that discards on process exit would re-pay
+free-tier rate limits every run. On a hit, the stored dict is validated back into the
+caller's `output_schema` via `output_schema.model_validate(...)` — the schema identity
+is guaranteed by the key (which already includes `output_schema_name`), so nothing
+about the schema needs to be stored alongside the data.
+
+**Logging/observability — `LoggingLLMService` (`observability.py`).** Every call that
+actually reaches (or attempts to reach) the provider is logged once, centrally:
+consumer name (from `LLMRequest.metadata`), model, latency, token count if available.
+Cache hits are not logged here — they're not visible to this layer by construction
+(§6's composition order puts caching outside logging), and a hit did no work worth a
+log line anyway. The reason this belongs in `llm_service` rather than each consumer
+reimplementing it. Uses `common.logging.get_logger(...)` (see
+`resources/documentation/common/logging/spec.md`) rather than configuring its own
+handler — the same shared logger setup every module in this codebase uses.
 
 **Error handling — `errors.py`.** The service raises typed errors —
 `LLMProviderError` (network/API failures) and `LLMValidationError`
@@ -271,7 +362,7 @@ metadata-only testability goal one layer over: planning is testable from JSON
 fixtures because analysis is metadata by the time it reaches planning; consumers of
 `llm_service` are testable from fixtures for the same reason one layer earlier.
 
-- `LangChainLLMService` gets its own thin test against recorded/fixture responses,
+- `OpenAICompatibleLLMService` gets its own thin test against recorded/fixture responses,
   isolated from every consumer's tests.
 - `CachingLLMService` and `LoggingLLMService` are tested against a fake inner
   `LLMService`, independent of the real provider.
@@ -298,22 +389,36 @@ src/common/llm_service/
   schema.py                 # LLMRequest, TextRequest, MultimodalRequest, ImageInput (§3)
   errors.py                  # LLMProviderError, LLMValidationError
   factory.py                  # LLMServiceConfig + get_llm_service() (§6)
-  langchain_impl.py            # LangChainLLMService (§7)
   caching.py                    # CachingLLMService decorator (§9)
   observability.py                # LoggingLLMService decorator (§9)
   prompt_manager.py                 # PromptManager (§5)
   prompts/                           # template assets (not importable code)
     familiarity_score.txt
+  providers/                          # concrete provider implementations
+    __init__.py                        # imports every built-in provider module,
+                                        # registering each as a side effect (§6)
+    registry.py                         # register_provider(), get_provider_factory() (§6)
+    openai_compatible.py                 # OpenAICompatibleLLMService (§7);
+                                          # registers itself as "opencode_zen"
 
 tests/common/llm_service/
   test_base.py             # default generate_batch() against a fake generate()
   test_schema.py            # TextRequest / MultimodalRequest / ImageInput validation
   test_factory.py             # config-memoized singleton behavior
-  test_langchain_impl.py        # LangChainLLMService against fixture/recorded responses
-  test_caching.py                 # CachingLLMService decorator
-  test_observability.py             # LoggingLLMService decorator
-  test_prompt_manager.py              # template load/render/version, no LLM calls
+  test_caching.py               # CachingLLMService decorator
+  test_observability.py           # LoggingLLMService decorator
+  test_prompt_manager.py            # template load/render/version, no LLM calls
+  conftest.py                         # make_llm_service_config fixture
+  providers/
+    test_registry.py                   # register/lookup round trip, unknown-name
+                                        # and duplicate-registration errors
+    test_openai_compatible.py          # OpenAICompatibleLLMService against
+                                        # fixture/recorded responses
 ```
+
+Concrete provider implementations live under `providers/`; everything else at the top
+of `llm_service/` is factory/interface/schema/decorator infrastructure shared by every
+provider, not tied to any one of them.
 
 ---
 
@@ -324,7 +429,7 @@ tests/common/llm_service/
 | One `LLMRequest` with an optional `images` field | `TextRequest` / `MultimodalRequest` as separate concrete types (§3) | An empty-but-present `images` list is a valid-looking but meaningless state; a discriminated pair makes it unrepresentable |
 | Familiarity-scorer-specific service, generalized later if needed | Generic `llm_service` from the start, familiarity scoring as its first consumer (§1) | "Common" was the explicit scope — every future LLM call (NL config parsing, anything else) must not require touching this module's public surface |
 | Prefect / workflow orchestrator for batch calls | Bounded-concurrency `generate_batch()` on `BaseLLMService` (§8) | No multi-step DAG, no cross-step dependency, no scheduling need — an orchestrator's cost buys nothing here |
-| Caching/logging baked into `LangChainLLMService` | Decorator composition in the factory (§6, §9) | Keeps the provider implementation swappable and each concern independently testable against a fake inner service |
+| Caching/logging baked into `OpenAICompatibleLLMService` | Decorator composition in the factory (§6, §9) | Keeps the provider implementation swappable and each concern independently testable against a fake inner service |
 | `generate()` returning a result wrapper (output + usage + cache flag) | Bare `T` return; metadata captured by logging as a side effect (§2) | Keeps every consumer's call site a one-liner; usage stats are a deliberate future addition, not default ceremony |
 
 ---
@@ -336,3 +441,59 @@ tests/common/llm_service/
 | Q1 | OpenCode Zen free-tier rate limits / stability under a ~15-track run | `max_concurrency` default (§6, §8) |
 | Q2 | Prompt versioning scheme — semantic version in the template file, or content-hash of the template itself | Cache key stability (§9) |
 | Q3 | Does NL-config-parsing (deferred, §1) need anything beyond a new consumer schema + a new `PromptManager` template, or does it expose a gap in `LLMRequest` | Scope of this module when that consumer is built |
+
+---
+
+## Amendments
+
+- **2026-08-15** — Two clarifications surfaced during initial implementation, both
+  additive (no public signature changed; nothing already built against this spec
+  breaks):
+  1. Retry/backoff moved from "only inside `generate_batch()`'s dispatch loop" to a
+     shared `BaseLLMService._call_with_retry()` helper used at the point of the actual
+     provider call (§8) — so a bare `generate()` call retries too, not just batched
+     calls.
+  2. Cache storage was unpinned (generic "key on a hash," no stated backend). Now
+     specified: disk-backed, one JSON file per key, under a new
+     `LLMServiceConfig.cache_dir` field (§6, §9).
+  3. §9's cache key already named `prompt_version` as a component, but no field on
+     `LLMRequest` actually carried it from `PromptManager` to `CachingLLMService`.
+     Added `LLMRequest.prompt_version: str | None` (§3); `PromptManager.render()`
+     returns it alongside the rendered text (§5) instead of it being a second,
+     separate lookup.
+  4. Composition order reversed: `LoggingLLMService(CachingLLMService(...))` made
+     "logs every request including cache hits" unimplementable without either a
+     fragile latency heuristic or breaking decorator symmetry, since `generate()`
+     deliberately returns a bare value with no hit/miss metadata (§2). Now
+     `CachingLLMService(LoggingLLMService(OpenAICompatibleLLMService(config)))` (§6) — a
+     cache hit short-circuits before logging is ever reached, which is correct
+     (nothing worth logging happened), and logging only sees real provider calls.
+
+- **2026-08-15** — Post-implementation reorganization, all internal/organizational —
+  `LLMService`'s public methods and `get_llm_service()`'s signature are unchanged, and
+  nothing outside this module ever imported the moved path directly:
+  1. Concrete provider implementations moved under a new `providers/` subdirectory;
+     `langchain_impl.py` renamed to `providers/openai_compatible.py`, and
+     `LangChainLLMService` renamed to `OpenAICompatibleLLMService` — the class has zero
+     OpenCode-Zen-specific logic (`base_url`/`api_key`/`model` are all config-driven),
+     so it's named for the protocol it speaks, not the library it's built with (§7,
+     §11).
+  2. `LLMServiceConfig`'s Python-level defaults removed (§6) — every field is now
+     required; `config.yaml` is the sole place a default is declared.
+
+- **2026-08-15** — Two more changes, both additive:
+  1. **Provider registry added** (§6, §11). `LLMServiceConfig.provider` existed since
+     the first draft of this spec but was never actually read — `get_llm_service()`
+     always constructed `OpenAICompatibleLLMService` directly. Now `provider` is a
+     real registry key: `providers/registry.py` maps it to a factory function
+     (`LLMServiceConfig -> LLMService`), and `OpenAICompatibleLLMService` registers
+     itself under `"opencode_zen"`. `get_llm_service()`'s signature is unchanged, and
+     `config.yaml`'s existing `provider: opencode_zen` continues to resolve to exactly
+     the same object graph as before — this closes the gap between what the field
+     always claimed to do and what the code actually did.
+  2. **`method="function_calling"` documented** (§7) — this was already live in
+     `providers/openai_compatible.py` (found and fixed during a live test against
+     OpenCode Zen: the default `with_structured_output` method sent a
+     `response_format` most proxied models reject) but had never been written back
+     into the spec. Recorded here so spec and code agree, per this repo's own rule
+     that they must never drift silently.

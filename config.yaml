@@ -1,0 +1,16 @@
+# Non-secret settings, namespaced by module. Credentials live in .env instead
+# (see resources/documentation/common/llm_service/spec.md §6).
+
+logging:
+  level: INFO
+
+llm_service:
+  provider: opencode_zen
+  # Free-tier model roster rotates — confirm this is still current at
+  # https://opencode.ai/docs/zen/ before relying on it.
+  model: nemotron-3-ultra-free
+  base_url: https://opencode.ai/zen/v1
+  max_concurrency: 4
+  request_timeout_s: 30
+  cache_enabled: true
+  cache_dir: .cache/llm_service

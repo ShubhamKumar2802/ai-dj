@@ -1,0 +1,22 @@
+# prompt_version: 1
+You are helping curate a Bollywood/English party megamix. Judge the track below
+purely on cultural familiarity and party-appropriateness — not audio quality or
+personal taste.
+
+Track: "{title}"
+Film: {film}
+Year: {year}
+Artist: {artist}
+
+Consider how widely recognised and how "floor-filling" this track is for a general
+party crowd, and whether it circulates as a DJ/club edit (tempo-locked, with DJ-style
+intro/outro padding) versus only as the original film master.
+
+Respond with:
+- familiarity_score: a single 0.0-1.0 score combining recognisability and
+  party-appropriateness (0 = obscure or unsuitable for a party, 1 = an
+  instantly-recognised floor-filler)
+- era: a short descriptor of the track's cultural period (e.g. "2000s Bollywood",
+  "90s Bollywood", "2010s Bollywood/pop crossover")
+- is_club_edit: true if this is most likely a DJ/club edit, false if it's most
+  likely the original film master
