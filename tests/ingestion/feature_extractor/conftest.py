@@ -69,6 +69,56 @@ def click_track_wav(tmp_path, click_track_audio) -> Path:
     return path
 
 
+def _kick(duration_s: float, freq: float, sample_rate: int) -> np.ndarray:
+    """A short, decaying low-frequency thump."""
+    n = int(duration_s * sample_rate)
+    t = np.arange(n) / sample_rate
+    envelope = np.exp(-t * 20.0)
+    return envelope * np.sin(2 * np.pi * freq * t)
+
+
+@pytest.fixture(scope="session")
+def downbeat_accented_click_track_audio(click_track_bpm) -> tuple[np.ndarray, int]:
+    """Click track where beat 1 of every bar (the downbeat) carries extra
+    low-frequency energy on top of the regular click.
+
+    `click_track_audio` puts an identical click on every beat, so no phase
+    has more bass energy than another — it can't exercise rhythm.py's
+    phase-contrast downbeat heuristic (§6), which needs a real bass accent
+    to find. This fixture gives it one.
+    """
+    beat_interval_s = 60.0 / click_track_bpm
+    n_beats = BEATS_PER_BAR * N_BARS
+    duration_s = n_beats * beat_interval_s + 1.0
+    n_samples = int(duration_s * SAMPLE_RATE)
+
+    t = np.arange(n_samples) / SAMPLE_RATE
+    tone = 0.05 * np.sin(2 * np.pi * 220.0 * t)
+
+    audio = tone.copy()
+    click = _decaying_click(0.05, SAMPLE_RATE)
+    kick = _kick(0.15, 60.0, SAMPLE_RATE)
+    for beat_index in range(n_beats):
+        start = int(round(beat_index * beat_interval_s * SAMPLE_RATE))
+        end = min(start + len(click), n_samples)
+        audio[start:end] += click[: end - start]
+        if beat_index % BEATS_PER_BAR == 0:
+            kick_end = min(start + len(kick), n_samples)
+            audio[start:kick_end] += kick[: kick_end - start]
+
+    audio = np.clip(audio, -1.0, 1.0).astype(np.float32)
+    stereo = np.stack([audio, audio], axis=1)
+    return stereo, SAMPLE_RATE
+
+
+@pytest.fixture
+def downbeat_accented_click_track_wav(tmp_path, downbeat_accented_click_track_audio) -> Path:
+    audio, sample_rate = downbeat_accented_click_track_audio
+    path = tmp_path / "downbeat_accented_click_track.wav"
+    sf.write(str(path), audio, sample_rate, subtype="FLOAT")
+    return path
+
+
 @pytest.fixture(scope="session")
 def riser_audio() -> tuple[np.ndarray, int]:
     """Synthetic riser: monotonic upward spectral-centroid drift ending in a
