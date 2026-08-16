@@ -1295,3 +1295,37 @@ Kept so they are not re-litigated.
 | Cue-ins assuming every track has a usable intro | `hook_in` (D27) | Film masters have no DJ padding by construction; `intro`/`riser_start` do not exist for them |
 | Time-boxed cut as the only cue-out | `hook_exit` preferred (D27) | N bars is musically blind; lands mid-hook or two bars into the second antara |
 | "Loudness normalisation covers format normalisation" | Canonical format (D25) | Unrelated problems — gain addresses level, resampling addresses speed and pitch |
+
+---
+
+## 14. Amendments
+
+### 2026-08-16 — Terminology: chorus/verse as primary vocabulary
+
+**Going forward, code and prose use `chorus`/`verse` as the primary terms for the
+recurring hook and the changing-lyric section of a film song, with `mukhda`/`antara`
+kept as the traditional gloss** (e.g. "chorus (mukhda)" on first use), not the reverse.
+Mukhda functions as the song's chorus — the repeated hook, same lyrics every
+occurrence; antara functions as its verse — new lyrics each pass, resolving back to
+the hook.
+
+**Cue-kind rename (§1.5, Film template):** `mukhda_start` → `chorus_start`,
+`mukhda_end` → `chorus_end`. `interlude_start`, `first_downbeat`, `intro_end`,
+`outro_start` are unaffected — interlude has no Western-pop equivalent worth forcing.
+`antara` was never its own cue kind in §1.5, so nothing there needs renaming until
+section labelling (v2, §6.3 Step 2) names verses explicitly.
+
+**This is an amendment, not a new version** — no public contract shape changed, only a
+label. Existing prose in §1.4, §1.5, D27, and elsewhere in this document that still
+reads `mukhda`/`antara`/`mukhda_start`/`mukhda_end` has **not** been mass-updated; it
+remains correct under the old vocabulary and should be read as synonymous with the new
+one. New specs and code (starting with `resources/documentation/ingestion/`) use the
+new names directly.
+
+**Caveats that travel with the rename, not just the old terms:** film songs are
+typically **chorus-first** — the hook opens the song, before the first verse, inverted
+from the usual verse→chorus expectation in Western pop (§1.4). And there is still **no
+drop** — §1.4's original correction was about the EDM template, independent of which
+label set names the film side. Relabelling mukhda as "chorus" must not smuggle in a
+"verse always precedes chorus" prior anywhere downstream (notably §6.3 Step 2's
+template-constrained decoding, v2).

@@ -19,6 +19,16 @@ wheels/
 # Secrets
 .env
 .env.*
+!.env.example
+
+# Runtime caches (e.g. llm_service's disk-backed response cache)
+.cache/
+
+# Scratch scripts for manually testing against live APIs — not part of the test suite
+src/common/llm_service/examples/
+
+# testing tracks
+/music
 
 # macOS
 .DS_Store
