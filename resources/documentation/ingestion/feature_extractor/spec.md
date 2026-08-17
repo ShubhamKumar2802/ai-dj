@@ -179,10 +179,14 @@ real 268s Bollywood track:
 
 `MonoLoader` here is the spike's own benchmark choice — a quick load-speed comparison, not
 the adopted production technique. `load_canonical` (§3, corrected in v2) uses
-`AudioLoader` + a separate `Resample` pass instead, specifically because `MonoLoader`
-downmixes to mono and would discard real stereo content. The ~100x speed comparison
-below still holds (`AudioLoader` is the same underlying decoder family), just not via
-`MonoLoader` itself.
+`AudioLoader` + a separate per-channel `Resample` pass instead, specifically because
+`MonoLoader` downmixes to mono and would discard real stereo content. **Re-measured on
+this same track**: `load_canonical` takes **~3.2s** (three runs: 3.39s, 3.28s, 3.19s) —
+meaningfully slower than the `MonoLoader`-only figure above (the separate `Resample`
+pass over both channels adds real cost the fused `MonoLoader` load+resample+downmix
+didn't pay), so the "~100x faster than librosa" framing was wrong as originally
+written. Still ~14x faster than librosa's 46.3s, not 100x — the tooling choice (Essentia
+over librosa) still holds, just not by the margin first claimed.
 
 **madmom is dropped.** Its C-extension build failed on this machine — blocked by an
 unaccepted Xcode license (`sudo xcodebuild -license`), a local/environment issue, not
@@ -192,8 +196,10 @@ librosa-only downbeat fallback; see §6 for what that costs.
 **Essentia is the primary engine** for load, rhythm, loudness, spectral features,
 chroma, and key — confirmed via this build's actual API surface (`RhythmExtractor2013`,
 `LoudnessEBUR128`, `TruePeakDetector`, `SpectralCentroidTime`, `Flux`, `NNLSChroma`,
-`KeyExtractor` all present), and ~100x faster to load than librosa on the measured
-track. **librosa is retained only as an independent cross-check** on `bpm`/
+`KeyExtractor` all present), and ~14x faster to load than librosa on the measured
+track (re-measured for `load_canonical`'s actual `AudioLoader`+`Resample` path — see
+the note above; the original ~100x figure was `MonoLoader`-only, not what's used in
+production). **librosa is retained only as an independent cross-check** on `bpm`/
 `beat_times` (§6) — not load-bearing for any field on its own — because design-v3 §11
 explicitly treats disagreement between two independent trackers as a useful signal,
 not noise to be resolved by picking one library and ignoring the other.
