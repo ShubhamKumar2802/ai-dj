@@ -5,15 +5,15 @@ A snapshot of module coverage against `resources/ai-dj-design-v3.md`'s architect
 against the design doc before trusting it, especially the `Spec`/`Code` columns.
 Update this table as each module's spec or implementation lands.
 
-Last checked: 2026-08-16.
+Last checked: 2026-08-17.
 
 ## Build order
 
 | Step | Module | design-v3 ref | Spec | Code |
 |---|---|---|---|---|
 | 0 | Walking skeleton milestone — exercises Milestone A of `render/transition_renderer` (#6) + `render/playlist_renderer` (#7) below | §10 | Done | — |
-| 1 | `ingestion/feature_extractor` | D6, D25 | Done | — |
-| 2 | Per-bar feature stack (folded into `feature_extractor` §7 — not its own module) | §6.3 step 1 | Done (part of #1) | — |
+| 1 | `ingestion/feature_extractor` | D6, D25 | Done | Done |
+| 2 | Per-bar feature stack (folded into `feature_extractor` §7 — not its own module) | §6.3 step 1 | Done (part of #1) | Done (part of #1) |
 | 3 | `ingestion/cue_derivation` | D8/D9/D22/D27 | Done | — |
 | — | `ingestion/orchestrator` (glue implied by §4's `RawFeatures → Track[]` arrow; no design-v3 step number — sits between #3 and #4) | §4 | — | — |
 | 4 | `processing/edge_builder` | D4/D5/D19 | — | — |
