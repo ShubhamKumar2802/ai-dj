@@ -1,24 +1,5 @@
 # Feature Extractor — Spec
 
-**v2** — supersedes v1, see `archive/spec-v1.md`.
-
-**What changed in v2** (both found during code review, before the module's first
-merge — see `plan.md`): (1) `PerBarFeatures` gains `end_time` — v1 only stored
-`start_time`, which forced `loudness.py`/`vocal_band.py` to each independently guess
-a bar's end as "the next bar's start, or the literal end of the audio file for the
-last bar." That guess was wrong for every track's last bar (the real end is the last
-detected downbeat, not the file's end), silently widening the last bar's
-`energy_curve`/`vocal_band_energy` window into any trailing outro/silence. Each bar
-now carries its own true `end_time`, computed once where it's already known
-(`spectral_features.py`), removing the guess entirely. (2) §3 corrected — it
-described `AudioLoader` taking a `sampleRate` parameter, which doesn't exist on the
-installed Essentia build; the real technique (load at native rate, then a separate
-`Resample` pass) was implemented correctly and documented in code, but the spec text
-itself was never brought back in line. Fixed here. Neither change affects the
-public function signatures (`load_canonical`, `extract_features`,
-`get_or_extract_features` are all unchanged) — only `PerBarFeatures`'s schema and
-§3's description.
-
 **Layer:** `ingestion/` — first module in this layer.
 **v1 tooling:** Essentia (primary DSP engine) + librosa (cross-check only). No madmom.
 
@@ -125,10 +106,6 @@ RawFeatures:
 PerBarFeatures:
   bar_index         : int
   start_time         : float
-  end_time            : float   # v2 — the true end of this bar (the next
-                                  # downbeat), not reconstructed downstream.
-                                  # Consumers must use this, not "the next
-                                  # bar's start_time," for the last bar.
   rms                 : float
   spectral_centroid    : float
   spectral_flux          : float
@@ -150,20 +127,10 @@ contract; sample-rate-aware conversion happens once, later, inside a renderer.
 ## 3. Canonical format & loading (`loader.py`)
 
 **48kHz float32 stereo, pinned at ingestion (D25).** `load_canonical(path) ->
-StereoPCM` always returns audio at this rate — never a file's native rate. This is
-the only place in the module allowed to import an audio decoder.
-
-**v2: corrected to match the installed Essentia build's actual API** (v1 assumed
-`AudioLoader`/`MonoLoader` took a `sampleRate` parameter; neither does on this
-build). The real technique: Essentia's `AudioLoader` loads at the file's native rate
-while preserving its real channel count (it has no rate-conversion parameter at
-all); `MonoLoader` *does* resample but also downmixes to mono, which would silently
-discard genuine stereo content before "upcasting" it back — not what D25's
-mono-upcast rule is for (that rule covers genuinely mono *sources*, not throwing
-away stereo content this loader already has). So `load_canonical` loads via
-`AudioLoader` at native rate, then resamples explicitly to 48kHz via Essentia's
-`Resample` algorithm, run independently per channel. Mono sources (native channel
-count 1) upcast to stereo by duplicating the single channel.
+StereoPCM` decodes via Essentia's `AudioLoader`/`MonoLoader` with `sampleRate=48000`
+explicit at the call site — never relying on a file's native rate. Mono sources
+upcast to stereo. This is the only place in the module allowed to import an audio
+decoder.
 
 ---
 

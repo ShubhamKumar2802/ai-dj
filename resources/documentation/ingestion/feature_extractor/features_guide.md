@@ -58,6 +58,7 @@ Each bar has:
 |---|---|
 | `bar_index` | 0-based position in the sequence. |
 | `start_time` | Where this bar begins, in seconds. |
+| `end_time` | Where this bar ends, in seconds — the next detected downbeat. Downstream consumers should always use this rather than assuming "the next bar's `start_time`," especially for the last bar (which has no next bar to borrow a boundary from). |
 | `rms` | Loudness of this bar, on a linear scale (root-mean-square amplitude). Rising RMS across consecutive bars usually means a build-up; falling RMS means the track is thinning out or reaching a breakdown. |
 | `spectral_centroid` | "Brightness," in Hz — where the energy of the sound is concentrated across the frequency spectrum. Higher = more high-frequency content (hi-hats, cymbals, bright synths); lower = bass-heavy or muffled. |
 | `spectral_flux` | How much the frequency content is changing from moment to moment within the bar. High flux = busy/percussive/transient-rich; low flux = sustained, steady-state sound (a held chord, a drone). |
