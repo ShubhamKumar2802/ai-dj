@@ -14,3 +14,8 @@ llm_service:
   request_timeout_s: 30
   cache_enabled: true
   cache_dir: .cache/llm_service
+
+feature_extractor:
+  extractor_version: "2"
+  cache_dir: .cache/feature_extractor
+  sample_rate: 48000

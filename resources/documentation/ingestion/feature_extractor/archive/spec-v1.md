@@ -1,24 +1,5 @@
 # Feature Extractor — Spec
 
-**v2** — supersedes v1, see `archive/spec-v1.md`.
-
-**What changed in v2** (both found during code review, before the module's first
-merge — see `plan.md`): (1) `PerBarFeatures` gains `end_time` — v1 only stored
-`start_time`, which forced `loudness.py`/`vocal_band.py` to each independently guess
-a bar's end as "the next bar's start, or the literal end of the audio file for the
-last bar." That guess was wrong for every track's last bar (the real end is the last
-detected downbeat, not the file's end), silently widening the last bar's
-`energy_curve`/`vocal_band_energy` window into any trailing outro/silence. Each bar
-now carries its own true `end_time`, computed once where it's already known
-(`spectral_features.py`), removing the guess entirely. (2) §3 corrected — it
-described `AudioLoader` taking a `sampleRate` parameter, which doesn't exist on the
-installed Essentia build; the real technique (load at native rate, then a separate
-`Resample` pass) was implemented correctly and documented in code, but the spec text
-itself was never brought back in line. Fixed here. Neither change affects the
-public function signatures (`load_canonical`, `extract_features`,
-`get_or_extract_features` are all unchanged) — only `PerBarFeatures`'s schema and
-§3's description.
-
 **Layer:** `ingestion/` — first module in this layer.
 **v1 tooling:** Essentia (primary DSP engine) + librosa (cross-check only). No madmom.
 
@@ -125,10 +106,6 @@ RawFeatures:
 PerBarFeatures:
   bar_index         : int
   start_time         : float
-  end_time            : float   # v2 — the true end of this bar (the next
-                                  # downbeat), not reconstructed downstream.
-                                  # Consumers must use this, not "the next
-                                  # bar's start_time," for the last bar.
   rms                 : float
   spectral_centroid    : float
   spectral_flux          : float
@@ -150,20 +127,10 @@ contract; sample-rate-aware conversion happens once, later, inside a renderer.
 ## 3. Canonical format & loading (`loader.py`)
 
 **48kHz float32 stereo, pinned at ingestion (D25).** `load_canonical(path) ->
-StereoPCM` always returns audio at this rate — never a file's native rate. This is
-the only place in the module allowed to import an audio decoder.
-
-**v2: corrected to match the installed Essentia build's actual API** (v1 assumed
-`AudioLoader`/`MonoLoader` took a `sampleRate` parameter; neither does on this
-build). The real technique: Essentia's `AudioLoader` loads at the file's native rate
-while preserving its real channel count (it has no rate-conversion parameter at
-all); `MonoLoader` *does* resample but also downmixes to mono, which would silently
-discard genuine stereo content before "upcasting" it back — not what D25's
-mono-upcast rule is for (that rule covers genuinely mono *sources*, not throwing
-away stereo content this loader already has). So `load_canonical` loads via
-`AudioLoader` at native rate, then resamples explicitly to 48kHz via Essentia's
-`Resample` algorithm, run independently per channel. Mono sources (native channel
-count 1) upcast to stereo by duplicating the single channel.
+StereoPCM` decodes via Essentia's `AudioLoader`/`MonoLoader` with `sampleRate=48000`
+explicit at the call site — never relying on a file's native rate. Mono sources
+upcast to stereo. This is the only place in the module allowed to import an audio
+decoder.
 
 ---
 
@@ -177,17 +144,6 @@ real 268s Bollywood track:
 | librosa (`audioread` backend) | 46.3s | 130.81 |
 | Essentia (`MonoLoader` + `RhythmExtractor2013`, `method="multifeature"`) | 0.42s | 130.59, confidence 1.93 |
 
-`MonoLoader` here is the spike's own benchmark choice — a quick load-speed comparison, not
-the adopted production technique. `load_canonical` (§3, corrected in v2) uses
-`AudioLoader` + a separate per-channel `Resample` pass instead, specifically because
-`MonoLoader` downmixes to mono and would discard real stereo content. **Re-measured on
-this same track**: `load_canonical` takes **~3.2s** (three runs: 3.39s, 3.28s, 3.19s) —
-meaningfully slower than the `MonoLoader`-only figure above (the separate `Resample`
-pass over both channels adds real cost the fused `MonoLoader` load+resample+downmix
-didn't pay), so the "~100x faster than librosa" framing was wrong as originally
-written. Still ~14x faster than librosa's 46.3s, not 100x — the tooling choice (Essentia
-over librosa) still holds, just not by the margin first claimed.
-
 **madmom is dropped.** Its C-extension build failed on this machine — blocked by an
 unaccepted Xcode license (`sudo xcodebuild -license`), a local/environment issue, not
 a real madmom/numpy incompatibility. Resolving that was rejected in favor of the
@@ -196,10 +152,8 @@ librosa-only downbeat fallback; see §6 for what that costs.
 **Essentia is the primary engine** for load, rhythm, loudness, spectral features,
 chroma, and key — confirmed via this build's actual API surface (`RhythmExtractor2013`,
 `LoudnessEBUR128`, `TruePeakDetector`, `SpectralCentroidTime`, `Flux`, `NNLSChroma`,
-`KeyExtractor` all present), and ~14x faster to load than librosa on the measured
-track (re-measured for `load_canonical`'s actual `AudioLoader`+`Resample` path — see
-the note above; the original ~100x figure was `MonoLoader`-only, not what's used in
-production). **librosa is retained only as an independent cross-check** on `bpm`/
+`KeyExtractor` all present), and ~100x faster to load than librosa on the measured
+track. **librosa is retained only as an independent cross-check** on `bpm`/
 `beat_times` (§6) — not load-bearing for any field on its own — because design-v3 §11
 explicitly treats disagreement between two independent trackers as a useful signal,
 not noise to be resolved by picking one library and ignoring the other.
@@ -289,8 +243,7 @@ Essentia's `TruePeakDetector`.
 **`energy_curve[]` is *not* `LoudnessEBUR128`'s `shortTermLoudness` output taken
 as-is** — its fixed 3-second window doesn't align to bar boundaries at most tempos.
 `energy_curve[]` is built by averaging the `momentaryLoudness` series within each
-bar's own `[start_time, end_time)` window (v2: `end_time` is a `PerBarFeatures` field,
-§2 — not reconstructed from the next bar's `start_time`), giving one LUFS value per
+bar's `[start_time, start_time + bar_duration)` window, giving one LUFS value per
 bar, aligned 1:1 with `per_bar_features` — matching D23's "short-term LUFS per bar"
 exactly, and reusing "the loudness machinery from §1.8" as instructed rather than
 recomputing RMS (D23: RMS under-weights the low end this repertoire's felt energy
