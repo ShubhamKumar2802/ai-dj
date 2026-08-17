@@ -60,17 +60,31 @@ def test_get_or_extract_features_version_bump_invalidates_cache(
     assert len(cache_files) == 2
 
 
-def test_get_or_extract_features_round_trip_reconstructs_nested_dataclasses(riser_wav, tmp_path):
+def test_get_or_extract_features_round_trip_reconstructs_per_bar_features(
+    click_track_wav, tmp_path
+):
+    # click_track_wav reliably produces non-empty per_bar_features (unlike
+    # riser_wav, which produces none) — a non-vacuous list actually
+    # exercises PerBarFeatures reconstruction, not just an always-true
+    # `len(...) >= 0` check.
+    config = _config(tmp_path)
+
+    get_or_extract_features(str(click_track_wav), config)  # miss: writes cache
+    cached = get_or_extract_features(str(click_track_wav), config)  # hit: reads cache
+
+    assert len(cached.per_bar_features) > 0
+    assert all(isinstance(b, PerBarFeatures) for b in cached.per_bar_features)
+
+
+def test_get_or_extract_features_round_trip_reconstructs_riser_candidates(riser_wav, tmp_path):
+    # The riser fixture reliably produces at least one candidate (verified
+    # in test_riser_detection.py) — a non-empty list actually exercises
+    # RiserCandidate reconstruction, not just an always-true empty check.
     config = _config(tmp_path)
 
     get_or_extract_features(str(riser_wav), config)  # miss: writes cache
     cached = get_or_extract_features(str(riser_wav), config)  # hit: reads cache
 
-    assert len(cached.per_bar_features) >= 0
-    assert all(isinstance(b, PerBarFeatures) for b in cached.per_bar_features)
-    # The riser fixture reliably produces at least one candidate (verified
-    # in test_riser_detection.py) — a non-empty list actually exercises
-    # RiserCandidate reconstruction, not just an always-true empty check.
     assert len(cached.riser_candidates) >= 1
     assert all(isinstance(r, RiserCandidate) for r in cached.riser_candidates)
 

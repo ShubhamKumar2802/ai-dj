@@ -50,8 +50,13 @@ def test_extract_features_key_is_none_or_valid_camelot(click_track_wav):
         assert rf.key_confidence is None
 
 
-def test_extract_features_riser_candidates_is_a_list(click_track_wav):
-    config = _config(click_track_wav.parent)
-    rf = extract_features(str(click_track_wav), config)
+def test_extract_features_riser_candidates_are_wired_through(riser_wav):
+    # click_track_wav produces zero riser candidates (confirmed elsewhere),
+    # so isinstance(..., list) alone would pass even if extract.py had a
+    # wiring bug that always passed []. riser_wav reliably produces at
+    # least one candidate, so this actually exercises the wiring.
+    config = _config(riser_wav.parent)
+    rf = extract_features(str(riser_wav), config)
 
     assert isinstance(rf.riser_candidates, list)
+    assert len(rf.riser_candidates) >= 1

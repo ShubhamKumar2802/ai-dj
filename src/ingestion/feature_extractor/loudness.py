@@ -45,27 +45,23 @@ def _compute_true_peak(pcm: StereoPCM) -> float:
     return max(left, right)
 
 
-def _bar_end_times(per_bar: list[PerBarFeatures], total_duration: float) -> list[float]:
-    starts = [b.start_time for b in per_bar]
-    return [*starts[1:], total_duration]
-
-
 def _bar_energy_curve(
     per_bar: list[PerBarFeatures],
     momentary_loudness: np.ndarray,
-    total_duration: float,
 ) -> list[float]:
     """§8: NOT `shortTermLoudness` taken as-is (its fixed 3s window doesn't
     align to bar boundaries) — average `momentaryLoudness` within each bar's
-    `[start_time, start_time + bar_duration)` window instead, one LUFS value
-    per bar, aligned 1:1 with `per_bar_features` by index.
+    own `[start_time, end_time)` window instead, one LUFS value per bar,
+    aligned 1:1 with `per_bar_features` by index. Each bar carries its own
+    true `end_time` (spec v2) rather than this module guessing it — the
+    last bar's end used to be approximated as the literal end of the audio
+    file, silently pulling in any post-track outro/silence.
     """
     momentary_times = np.arange(len(momentary_loudness)) * _MOMENTARY_HOP_S
-    ends = _bar_end_times(per_bar, total_duration)
 
     curve = []
-    for bar, end_time in zip(per_bar, ends):
-        mask = (momentary_times >= bar.start_time) & (momentary_times < end_time)
+    for bar in per_bar:
+        mask = (momentary_times >= bar.start_time) & (momentary_times < bar.end_time)
         values = momentary_loudness[mask]
         curve.append(float(np.mean(values)) if len(values) else 0.0)
     return curve
@@ -75,8 +71,7 @@ def compute_loudness(pcm: StereoPCM, per_bar: list[PerBarFeatures]) -> LoudnessR
     loudness_algo = es.LoudnessEBUR128(sampleRate=pcm.sample_rate, startAtZero=True)
     momentary, _short_term, integrated, _range = loudness_algo(pcm.samples)
 
-    total_duration = pcm.samples.shape[0] / pcm.sample_rate
-    energy_curve = _bar_energy_curve(per_bar, np.asarray(momentary), total_duration)
+    energy_curve = _bar_energy_curve(per_bar, np.asarray(momentary))
 
     return LoudnessResult(
         lufs_integrated=float(integrated),

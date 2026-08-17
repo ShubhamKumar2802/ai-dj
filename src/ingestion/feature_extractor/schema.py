@@ -5,6 +5,7 @@ from dataclasses import dataclass
 class PerBarFeatures:
     bar_index: int
     start_time: float
+    end_time: float
     rms: float
     spectral_centroid: float
     spectral_flux: float

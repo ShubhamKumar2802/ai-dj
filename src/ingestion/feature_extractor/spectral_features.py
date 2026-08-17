@@ -21,47 +21,56 @@ def _bar_segment(
     return np.ascontiguousarray(mono[start:end], dtype=np.float32)
 
 
-def _spectral_flux(segment: np.ndarray) -> float:
-    """Mean frame-to-frame spectral flux over the segment (spec §7).
-
-    `Flux` operates on consecutive magnitude spectra, not raw audio: frame
-    the segment, compute `Spectrum()` per frame, feed consecutive pairs
-    through `Flux()`, and reduce to one scalar via mean (an implementer
-    choice — spec doesn't pin sum vs. mean).
+def _framed_spectra(segment: np.ndarray, windowing, spectrum_algo) -> list:
+    """One magnitude spectrum per STFT frame — computed once per bar and
+    shared between `_spectral_flux` and `_chroma_vector` (both previously
+    re-framed and re-FFT'd the same segment independently).
     """
     if len(segment) < _FRAME_SIZE:
+        return []
+    return [
+        spectrum_algo(windowing(frame))
+        for frame in es.FrameGenerator(
+            segment, frameSize=_FRAME_SIZE, hopSize=_HOP_SIZE, startFromZero=True
+        )
+    ]
+
+
+def _spectral_flux(spectra: list, flux_algo) -> float:
+    """Mean frame-to-frame spectral flux over the bar (spec §7).
+
+    `Flux` is stateful — each call diffs against whatever spectrum it was
+    last called with internally. It must be called on *every* frame
+    (including frame 0, to seed that internal state) or the first recorded
+    diff ends up comparing frame 1 against Flux's uninitialized/zero state
+    instead of against frame 0 — an easy mistake since frame 0 has no
+    "previous frame" of its own to report a diff for.
+    """
+    if not spectra:
         return 0.0
-
-    windowing = es.Windowing(type="hann")
-    spectrum_algo = es.Spectrum()
-    flux_algo = es.Flux()
-
-    flux_values = []
-    prev_spectrum = None
-    for frame in es.FrameGenerator(
-        segment, frameSize=_FRAME_SIZE, hopSize=_HOP_SIZE, startFromZero=True
-    ):
-        spectrum = spectrum_algo(windowing(frame))
-        if prev_spectrum is not None:
-            flux_values.append(flux_algo(spectrum))
-        prev_spectrum = spectrum
-
-    return float(np.mean(flux_values)) if flux_values else 0.0
+    flux_algo.reset()
+    flux_values = [flux_algo(spectrum) for spectrum in spectra]
+    return float(np.mean(flux_values[1:])) if len(flux_values) > 1 else 0.0
 
 
-def _chroma_vector(segment: np.ndarray, sample_rate: int) -> list[float]:
+def _chroma_vector(spectra: list, sample_rate: int) -> list[float]:
     """12-dim chroma via Essentia `NNLSChroma` (spec §7).
 
     `NNLSChroma` takes a sequence of log-frequency spectrum frames (plus
-    per-frame tuning estimates from `LogSpectrum`), not raw audio or a
-    single spectrum — build that per-frame chain, then reduce NNLSChroma's
-    per-frame chromagram output to one vector per bar by averaging.
+    per-frame tuning estimates from `LogSpectrum`), not raw spectra directly
+    — build that per-frame chain, then reduce NNLSChroma's per-frame
+    chromagram output to one vector per bar by averaging.
+
+    `LogSpectrum`/`NNLSChroma` are deliberately constructed fresh per bar
+    (unlike `Windowing`/`Spectrum`/`Flux` above) — sharing them across the
+    whole track would change their tuning-estimate accumulation behavior,
+    a real algorithmic difference already verified under today's per-bar
+    semantics (A4/C4 tones peak exactly 3 semitone-bins apart), not a
+    pure efficiency cleanup.
     """
-    if len(segment) < _FRAME_SIZE:
+    if not spectra:
         return [0.0] * _CHROMA_BINS
 
-    windowing = es.Windowing(type="hann")
-    spectrum_algo = es.Spectrum()
     log_spectrum_algo = es.LogSpectrum(sampleRate=sample_rate)
 
     log_spectrogram: list = []
@@ -69,16 +78,10 @@ def _chroma_vector(segment: np.ndarray, sample_rate: int) -> list[float]:
     mean_tuning: list = []  # LogSpectrum's meanTuning is itself a running
     # vector_real (a tuning histogram), not a per-frame scalar — NNLSChroma
     # wants the final accumulated value, not one appended per frame.
-    for frame in es.FrameGenerator(
-        segment, frameSize=_FRAME_SIZE, hopSize=_HOP_SIZE, startFromZero=True
-    ):
-        spectrum = spectrum_algo(windowing(frame))
+    for spectrum in spectra:
         log_freq_spectrum, mean_tuning, local_tuning = log_spectrum_algo(spectrum)
         log_spectrogram.append(log_freq_spectrum)
         local_tunings.append(local_tuning)
-
-    if not log_spectrogram:
-        return [0.0] * _CHROMA_BINS
 
     # useNNLS=True (the algorithm's default) silently returns all-zero
     # chroma in the installed Essentia dev build (2.1b6.dev1389) — verified
@@ -106,9 +109,18 @@ def compute_per_bar_features(pcm: StereoPCM, rhythm: RhythmResult) -> list[PerBa
     sample_rate = pcm.sample_rate
     downbeats = rhythm.downbeat_times
 
+    # Windowing/Spectrum are stateless (pure frame-in/frame-out, no memory
+    # across calls) — safe to construct once per track and reuse across all
+    # bars. Flux is stateful (see _spectral_flux) but its constructor cost
+    # is avoided the same way, via .reset() per bar instead of rebuilding.
+    windowing = es.Windowing(type="hann")
+    spectrum_algo = es.Spectrum()
+    flux_algo = es.Flux()
+
     bars = []
     for bar_index, (start_time, end_time) in enumerate(zip(downbeats[:-1], downbeats[1:])):
         segment = _bar_segment(mono, sample_rate, start_time, end_time)
+        spectra = _framed_spectra(segment, windowing, spectrum_algo)
 
         if len(segment) == 0:
             rms = 0.0
@@ -121,12 +133,13 @@ def compute_per_bar_features(pcm: StereoPCM, rhythm: RhythmResult) -> list[PerBa
             PerBarFeatures(
                 bar_index=bar_index,
                 start_time=start_time,
+                end_time=end_time,
                 rms=rms,
                 spectral_centroid=centroid,
-                spectral_flux=_spectral_flux(segment),
+                spectral_flux=_spectral_flux(spectra, flux_algo),
                 low_band_energy=band_energy(segment, sample_rate, LOW_BAND_HZ),
                 high_band_energy=band_energy(segment, sample_rate, HIGH_BAND_HZ),
-                chroma_vector=_chroma_vector(segment, sample_rate),
+                chroma_vector=_chroma_vector(spectra, sample_rate),
             )
         )
 

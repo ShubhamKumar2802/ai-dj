@@ -38,6 +38,7 @@ def test_compute_per_bar_features_one_entry_per_downbeat_interval():
     assert len(bars) == 4  # len(downbeat_times) - 1
     assert [b.bar_index for b in bars] == [0, 1, 2, 3]
     assert [b.start_time for b in bars] == [0.0, 1.0, 2.0, 3.0]
+    assert [b.end_time for b in bars] == [1.0, 2.0, 3.0, 4.0]
 
 
 def test_compute_per_bar_features_no_entries_before_first_or_after_last_downbeat():
@@ -96,6 +97,27 @@ def test_compute_per_bar_features_chroma_vector_is_12_dim_and_nonzero():
 
     assert len(bars[0].chroma_vector) == 12
     assert sum(bars[0].chroma_vector) > 0.0
+
+
+def test_compute_per_bar_features_steady_tone_has_lower_flux_than_transient_signal(
+    click_track_audio,
+):
+    # Regression test: Flux is stateful and must be called on every frame
+    # (including frame 0, to seed its internal state) or the first recorded
+    # diff compares frame 1 against Flux's uninitialized/zero state instead
+    # of frame 0 — inflating flux for *every* signal, including a steady
+    # tone that shouldn't have much frame-to-frame spectral change at all.
+    steady = _tone(220.0, 2.0)
+    rhythm = _rhythm_with_downbeats([0.0, 1.0, 2.0])
+    steady_bars = compute_per_bar_features(_make_pcm(steady), rhythm)
+
+    click_audio, click_sr = click_track_audio
+    click_pcm = StereoPCM(samples=click_audio, sample_rate=click_sr)
+    click_duration = click_audio.shape[0] / click_sr
+    click_rhythm = _rhythm_with_downbeats([0.0, click_duration / 2, click_duration])
+    click_bars = compute_per_bar_features(click_pcm, click_rhythm)
+
+    assert steady_bars[0].spectral_flux < click_bars[0].spectral_flux
 
 
 def test_compute_per_bar_features_short_bar_below_frame_size_does_not_crash():

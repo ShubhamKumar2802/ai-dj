@@ -16,6 +16,6 @@ llm_service:
   cache_dir: .cache/llm_service
 
 feature_extractor:
-  extractor_version: "1"
+  extractor_version: "2"
   cache_dir: .cache/feature_extractor
   sample_rate: 48000

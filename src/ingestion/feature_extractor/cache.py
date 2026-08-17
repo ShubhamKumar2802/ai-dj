@@ -1,11 +1,15 @@
 import dataclasses
 import json
+import time
 from pathlib import Path
 
+from common.logging import get_logger
 from ingestion.feature_extractor.config import FeatureExtractorConfig
 from ingestion.feature_extractor.content_hash import hash_file
 from ingestion.feature_extractor.extract import extract_features
 from ingestion.feature_extractor.schema import PerBarFeatures, RawFeatures, RiserCandidate
+
+_logger = get_logger("ai_dj.feature_extractor.cache")
 
 
 def _cache_key(content_hash: str, extractor_version: str) -> str:
@@ -49,8 +53,19 @@ def get_or_extract_features(path: str, config: FeatureExtractorConfig) -> RawFea
     cache_path = _cache_path(cache_dir, key)
 
     if cache_path.exists():
+        _logger.info("cache hit path=%s key=%s", path, key)
         return _read(cache_path)
 
-    raw_features = extract_features(path, config)
+    _logger.info("cache miss path=%s key=%s — extracting", path, key)
+    start = time.monotonic()
+    try:
+        raw_features = extract_features(path, config)
+    except Exception:
+        elapsed_ms = (time.monotonic() - start) * 1000
+        _logger.warning("extraction failed path=%s elapsed_ms=%.1f", path, elapsed_ms)
+        raise
+
+    elapsed_ms = (time.monotonic() - start) * 1000
+    _logger.info("extraction ok path=%s elapsed_ms=%.1f", path, elapsed_ms)
     _write(cache_path, raw_features)
     return raw_features
