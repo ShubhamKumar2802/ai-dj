@@ -177,6 +177,13 @@ real 268s Bollywood track:
 | librosa (`audioread` backend) | 46.3s | 130.81 |
 | Essentia (`MonoLoader` + `RhythmExtractor2013`, `method="multifeature"`) | 0.42s | 130.59, confidence 1.93 |
 
+`MonoLoader` here is the spike's own benchmark choice — a quick load-speed comparison, not
+the adopted production technique. `load_canonical` (§3, corrected in v2) uses
+`AudioLoader` + a separate `Resample` pass instead, specifically because `MonoLoader`
+downmixes to mono and would discard real stereo content. The ~100x speed comparison
+below still holds (`AudioLoader` is the same underlying decoder family), just not via
+`MonoLoader` itself.
+
 **madmom is dropped.** Its C-extension build failed on this machine — blocked by an
 unaccepted Xcode license (`sudo xcodebuild -license`), a local/environment issue, not
 a real madmom/numpy incompatibility. Resolving that was rejected in favor of the
@@ -276,7 +283,8 @@ Essentia's `TruePeakDetector`.
 **`energy_curve[]` is *not* `LoudnessEBUR128`'s `shortTermLoudness` output taken
 as-is** — its fixed 3-second window doesn't align to bar boundaries at most tempos.
 `energy_curve[]` is built by averaging the `momentaryLoudness` series within each
-bar's `[start_time, start_time + bar_duration)` window, giving one LUFS value per
+bar's own `[start_time, end_time)` window (v2: `end_time` is a `PerBarFeatures` field,
+§2 — not reconstructed from the next bar's `start_time`), giving one LUFS value per
 bar, aligned 1:1 with `per_bar_features` — matching D23's "short-term LUFS per bar"
 exactly, and reusing "the loudness machinery from §1.8" as instructed rather than
 recomputing RMS (D23: RMS under-weights the low end this repertoire's felt energy
