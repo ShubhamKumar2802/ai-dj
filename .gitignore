@@ -27,6 +27,7 @@ wheels/
 # Scratch scripts for manually testing against live APIs — not part of the test suite
 src/common/llm_service/examples/
 src/ingestion/feature_extractor/examples/
+src/ingestion/cue_derivation/examples/
 
 # testing tracks
 /music
