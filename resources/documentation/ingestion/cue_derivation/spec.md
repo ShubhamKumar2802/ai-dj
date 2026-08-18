@@ -111,6 +111,14 @@ raw.downbeat_confidence`, passed straight through — this module has no indepen
 signal to improve on `feature_extractor`'s own honesty about downbeat-phase
 uncertainty (feature_extractor spec §6).
 
+**Exception: `raw.downbeat_times` empty** (see `## Amendments`) —
+`feature_extractor`'s `_detect_downbeats` returns `([], 0.0)` whenever fewer than
+`beats_per_bar * 2` beats are detected, so the naive formula above would raise
+`IndexError` on exactly the track this module most needs to quarantine cleanly.
+In that case: `grid_start = 0.0`, `grid_confidence = raw.downbeat_confidence`
+(already `0.0` by `feature_extractor`'s own contract), `free_intro_end = 0.0` —
+this still flows correctly into `status="excluded"` at §8 instead of crashing.
+
 **`free_intro_end` — a simplifying v1 decision, stated explicitly rather than left
 implicit:** set equal to `grid_start` unless `raw.riser_candidates` contains a
 candidate starting before `grid_start`, in which case `free_intro_end =
@@ -135,7 +143,10 @@ table: "Foote checkerboard on per-bar features... No" — no training required),
 convolved along the diagonal of a local self-similarity window built from
 `raw.per_bar_features`' six fields (`rms`, `spectral_centroid`, `spectral_flux`,
 `low_band_energy`, `high_band_energy`, `chroma_vector`) at each bar position. Peaks
-above a threshold become `PhraseBoundary` entries; peak height is `strength`.
+at or above `novelty_curve.mean() + config.phrase_boundary_novelty_std_multiplier *
+novelty_curve.std()` become `PhraseBoundary` entries (see `## Amendments` — this
+config field didn't exist before); peak height is `strength`. `detect_phrase_boundaries`
+therefore takes `config` as a parameter (§9's orchestration step 2 is amended to match).
 
 **Distinct from v2's SSM repetition analysis (§6.3 Step 3).** That technique builds
 a *full* pairwise self-similarity matrix to find distant, non-adjacent repeated
@@ -158,8 +169,22 @@ this module does neither of those things). v1 signal, from data already in
   (default 8 bars-worth of seconds at the track's own `bpm`) reads as `edm`-leaning.
 - Regularity of `phrase_grid[]` spacing — consistent 8- or 16-bar
   `bars_since_previous` reads `edm`; irregular or long (~12-bar, F8) spacing reads
-  `film`.
-- Neither signal clears its threshold confidently → `unknown`.
+  `film`. Formalized as: coefficient of variation (stdev/mean) of
+  `bars_since_previous` below `config.phrase_regularity_cv_threshold` reads
+  "regular"/`edm`-leaning (see `## Amendments` — this config field didn't exist
+  before); this signal abstains (no vote) when fewer than 2 `phrase_grid` gaps
+  exist.
+
+**Combination rule** (see `## Amendments` — only the "neither clears" case was
+previously stated): the intro-length signal always votes (duration/`free_intro_end`
+are always defined, so it never abstains); the regularity signal may abstain per
+above.
+
+```
+regularity signal abstains             -> use intro-length signal's vote
+both signals present and agree         -> that template
+both signals present, disagree         -> "unknown"
+```
 
 This directly gates D5's tier-penalty conditioning and D27's cue-kind preference
 order downstream (in the edge builder, out of scope here) — so it's load-bearing
@@ -191,6 +216,33 @@ segmentation model (§6.3: "roughly a day's work" is the doc's own estimate for 
 detector's actual complexity) — pure thresholding over two arrays already computed
 by `feature_extractor`.
 
+**Formula, spelled out precisely** (see `## Amendments` — these five config fields
+and this exact procedure didn't exist before). All thresholds are **per-track-relative**
+(percentile of the track's own distribution, never an absolute LUFS/energy cutoff) —
+mastering loudness varies too much between tracks for a fixed absolute cutoff to be
+meaningful:
+
+```
+1. e_thr = percentile(energy_curve, config.hook_high_energy_percentile * 100)
+   v_thr = percentile(vocal_band_energy, config.hook_high_vocal_percentile * 100)
+   high[i] = energy_curve[i] >= e_thr and vocal_band_energy[i] >= v_thr
+
+2. hook_in = start_time of the first hook_min_bars-wide window where
+   mean(high[window]) >= config.hook_plateau_occupancy   # NOT strict
+   contiguity — tolerates brief dips (a breath, a quiet fill) inside an
+   otherwise-sustained plateau; None if no such window exists.
+
+3. e_low, e_high = percentile(energy_curve, [10, 90])   # p10-p90, not min/max —
+   robust to a handful of near-silent outlier bars that would blow out a
+   min/max-based range
+   v_low, v_high = percentile(vocal_band_energy, [10, 90])
+   hook_exit = first phrase_grid boundary after the plateau where the bar-to-bar
+   drop in energy_curve clears config.hook_energy_drop_fraction * (e_high - e_low)
+   AND the drop in vocal_band_energy clears
+   config.hook_vocal_drop_fraction * (v_high - v_low); None if no such boundary
+   exists before track end.
+```
+
 ---
 
 ## 7. Cue emission (`cues.py`)
@@ -204,14 +256,41 @@ cue_in:   intro / riser_start    — when free_intro_end indicates real DJ paddi
           grid_start              — guaranteed fallback
 
 cue_out:  hook_exit               — preferred, musical (§6)
-          outro_start               — when a real outro is detected and the time
-                                        budget allows
+          outro_start               — deferred to v2, see `## Amendments` —
+                                        unreachable in v1; no detector formula
+                                        exists for this branch (unlike hook_exit/
+                                        hook_in's §6 formula), and unlike every
+                                        other gap resolved in this amendment there
+                                        was no real-track data to ground a v1
+                                        proposal against. `CueKind.outro_start`
+                                        stays in the enum for a future detector;
+                                        `cues.py` just never emits it in v1.
           time_boxed                 — guaranteed fallback: first phrase boundary
                                         after `config.time_box_bars` bars from
                                         cue-in, minimizing vocal presence (D22) —
                                         needs only phrase_grid[], which this module
                                         already computes
 ```
+
+**Cue-in branch 1's exact `CueKind`/position** (see `## Amendments` — this exact
+condition wasn't previously stated), reusing the same riser check §3 already makes
+rather than re-deriving it:
+
+```
+if raw.riser_candidates has a candidate starting before grid_start:
+    emit Cue(position=riser_candidates[0].start_time, kind="riser_start")
+else:
+    emit Cue(position=free_intro_end, kind="intro_end")
+    # free_intro_end == grid_start in this branch (no riser present, §3), so
+    # this never violates the hard no-cue-before-grid_start constraint below
+```
+
+This module emits **every qualifying candidate per side, in preference order** —
+not a single winner — so a `riser_start`/`intro_end` cue and the guaranteed
+`grid_start`/`first_downbeat` fallback cue can both appear in `cue_ins[]`, even at
+the same `position`, when no riser is present. `list[Cue]` (§2) plus the fact that
+the (out-of-scope) edge builder needs multiple cue-point combinations to search
+across is why this module hands over candidates rather than deciding for it.
 
 **Hard constraint, unconditional** (§1, D9/D10): no cue in `cue_ins[]`/`cue_outs[]`
 ever has `position < grid_start`. `riser_start`, when present, is the sole cue kind
@@ -255,13 +334,25 @@ CueDerivationConfig:
                                    # version pattern — no auto-derivation)
   time_box_bars           : int    # default 32 (§7)
   hook_min_bars             : int   # default 8 (§6)
-  exclude_threshold           : float  # default TBD — see §10
-  cut_only_threshold             : float  # default TBD — see §10
+  exclude_threshold           : float  # default 0.01  (§10 Q2 resolved 2026-08-18,
+                                        # see ## Amendments)
+  cut_only_threshold             : float  # default 0.15  (§10 Q2 resolved
+                                            # 2026-08-18, see ## Amendments)
   edm_intro_bars_threshold          : int  # default 8 (§5)
+  hook_high_energy_percentile        : float  # default 0.5 (§6, see ## Amendments)
+  hook_high_vocal_percentile          : float  # default 0.5 (§6, see ## Amendments)
+  hook_plateau_occupancy                : float  # default 0.7 (§6, see ## Amendments)
+  hook_energy_drop_fraction              : float  # default 0.25 (§6, see ## Amendments)
+  hook_vocal_drop_fraction                : float  # default 0.25 (§6, see ## Amendments)
+  phrase_boundary_novelty_std_multiplier   : float  # default 1.0 (§4, see ## Amendments)
+  phrase_regularity_cv_threshold             : float  # default 0.3 (§5, see ## Amendments)
 
 derive_cues(raw: RawFeatures, config: CueDerivationConfig) -> CueDerivationResult
   1. grid_start, grid_confidence, free_intro_end = derive_grid_origin(raw)   # §3
-  2. phrase_grid, phrase_length_bars = detect_phrase_boundaries(raw)          # §4
+  2. phrase_grid, phrase_length_bars = detect_phrase_boundaries(raw, config)   # §4
+                                                                    # (config arg
+                                                                    # added, see
+                                                                    # ## Amendments)
   3. structure_template = classify_structure_template(raw, free_intro_end,
                                                         phrase_grid, config)    # §5
   4. hook_in, hook_exit = detect_hook(raw, phrase_grid, config)                 # §6
@@ -282,7 +373,7 @@ it *doesn't* need one; rerun on every config/threshold change.
 | # | Question | Blocks |
 |---|---|---|
 | Q1 | `free_intro_end`'s formula (§3) is a v1 simplifying decision (equals `grid_start` unless a riser precedes it) — is this actually what design-v3's separate naming of the two fields intended? | Correctness of §3, low blast radius (one field) |
-| Q2 | `exclude_threshold`/`cut_only_threshold` (§8, §9) have no principled default yet — design-v3 §6.5 itself calls the equivalent judgment "currently a hand-tuned heuristic threshold" pending the (v2) grid-confidence model | Needs real tracks run through `feature_extractor` to set sane defaults empirically |
+| Q2 | `exclude_threshold`/`cut_only_threshold` (§8, §9) have no principled default yet — design-v3 §6.5 itself calls the equivalent judgment "currently a hand-tuned heuristic threshold" pending the (v2) grid-confidence model | Needs real tracks run through `feature_extractor` to set sane defaults empirically — **resolved 2026-08-18, see `## Amendments`** (sanity-checked against 3 real tracks, not a representative corpus — revisit with more real data) |
 | Q3 | `structure_template`'s two-signal heuristic (§5) hasn't been validated against design-v3's own club-edit vs. film-master test set (D11) | Whether D5's tier-penalty conditioning and D27's cue-kind preference order get the right signal in practice |
 | Q4 | Should `hook_exit`/`hook_in` thresholds (§6) vary by `structure_template`, given Bollywood's vocal density is 70-80% (D22) vs. EDM's much lower baseline — does one fixed "significant drop" threshold work for both? | §6's threshold constants — currently assumed template-agnostic |
 
@@ -337,3 +428,83 @@ the concrete payoff of splitting this module out from `feature_extractor` at all
 | Full SSM pairwise self-similarity matrix for boundary detection | Foote checkerboard novelty curve over a local window (§4) | SSM answers "which distant sections repeat" (v2, §6.3 Step 3); this module only needs "where does a section end," a cheaper, more local question |
 | `structure_template` via §6.3 Step 2's template-constrained Viterbi decode | A coarse two-signal heuristic (§5) | That's explicitly v2 scope in design-v3; v1 needs *some* signal to gate D5/D27 now, not the full grammar-based decoder |
 | Recompute or reinterpret `vocal_band_energy[]` here | Pass through unchanged as `Track.vocal_mask[]`; only read it to place cues (§1, §6) | Keeps the audio-derived signal's computation in exactly one place (`feature_extractor`), matching this module's own metadata-only invariant (§0) |
+
+---
+
+## Amendments
+
+- **2026-08-18** — Pre-implementation completion pass: no code exists against this
+  spec yet (`overview.md` row 3: Spec Done, Code —), so every change below is
+  additive/clarifying (defaults, internal detail — README's amendment column),
+  never a public-contract change (`CueDerivationResult`'s schema, `derive_cues`'s
+  own signature, and §11's file layout are all untouched). Grounded where possible
+  against the three real `RawFeatures` JSONs already committed at
+  `src/ingestion/feature_extractor/examples/outputs/*.json` — used as a sanity
+  check to catch wrong orders of magnitude and fragile absolute-threshold designs,
+  **not** as a fitting/validation set; the exact numbers below are v1 defaults to
+  revisit once more real tracks run through the pipeline, not final numbers.
+  1. `exclude_threshold`/`cut_only_threshold` (§8, §9, §10 Q2) resolved:
+     `0.01`/`0.15`. Measured `downbeat_confidence`: ~0.0015 true-noise floor (no
+     phase-differentiating signal at all), 0.013–0.034 across the three real
+     tracks, ~0.79 for a confidently phase-locked synthetic case — an order of
+     magnitude below what a naive 0–1 "confidence" reading would suggest. Both
+     thresholds sit clear of these bands rather than fit to the three exact
+     values; all three real tracks land `cut_only`, none `excluded` — consistent
+     with tier-3 cut-on-the-1 being film music's designed-for workhorse (D5), not
+     a fallback.
+  2. Five new `CueDerivationConfig` fields resolve §6's previously-unspecified
+     "significant drop" / "sustained high-energy" thresholds:
+     `hook_high_energy_percentile=0.5`, `hook_high_vocal_percentile=0.5`,
+     `hook_plateau_occupancy=0.7`, `hook_energy_drop_fraction=0.25`,
+     `hook_vocal_drop_fraction=0.25`. All per-track-relative (percentile/fraction
+     of the track's own p10–p90 range, never an absolute LUFS/energy cutoff) —
+     mastering loudness varies too much between tracks (`lufs_integrated` ranged
+     −7.5 to −11.4 across the three samples) for a fixed cutoff to be meaningful.
+     `hook_plateau_occupancy=0.7` (not strict 100% contiguity) exists because
+     strict per-bar contiguity found zero qualifying 8-bar plateaus on 2 of the 3
+     real tracks (a single quiet fill/breath breaks the window); occupancy
+     tolerance found one on all three. p10/p90 percentile ranges are used instead
+     of min/max because one track's `energy_curve` has a single near-silent
+     outlier bar (~−300 LUFS) that blows out a min/max-based range by ~30×. §6's
+     full formula is now spelled out precisely rather than left as "hand-tuned
+     defaults, not derived."
+  3. `phrase_boundary_novelty_std_multiplier=1.0` (§4, §9) — `detect_phrase_boundaries`
+     previously had no config field for its peak-picking threshold; standard MIR
+     peak-picking convention (mean + N·stdev of the novelty curve). §9's
+     orchestration step 2 gains a `config` argument to match
+     (`detect_phrase_boundaries(raw, config)`).
+  4. `phrase_regularity_cv_threshold=0.3` (§5, §9) — the "consistent spacing"
+     signal had no numeric cutoff; coefficient of variation (stdev/mean) of
+     `bars_since_previous` below this threshold reads "regular." Still explicitly
+     unvalidated against D11's test set (§10 Q3 stays open) — this only makes the
+     heuristic runnable, not correct.
+  5. §5's combination rule completed: previously only "neither signal clears
+     confidently → unknown" was stated. The intro-length signal never abstains
+     (duration is always known); only the regularity signal can (fewer than 2
+     `phrase_grid` gaps). Now: regularity abstains → intro-length's vote; both
+     present and agree → that vote; both present and disagree → `"unknown"`.
+  6. §7's cue-in branch 1 ("intro/riser_start") given an exact `CueKind`/position
+     rule, reusing §3's own riser check rather than re-deriving it: `riser_start`
+     at `riser_candidates[0].start_time` when a riser precedes `grid_start`, else
+     `intro_end` at `free_intro_end` (which equals `grid_start` in that branch).
+     Also stated explicitly: this module emits every qualifying candidate per
+     side in preference order, not a single winner — `cue_ins[]`/`cue_outs[]` are
+     the full candidate set the (out-of-scope) edge builder searches over, not a
+     pre-decided cut point; a preference-order cue and the guaranteed fallback
+     cue can both appear, even at the same position.
+  7. `outro_start` (§7) declared unreachable in v1 — no section ever defined what
+     makes something an outro (unlike `hook_exit`/`hook_in`'s full §6 formula),
+     and unlike every other gap here, there was no real-track data to ground a
+     v1 detector design against. `cue_out` selection always falls through to
+     `hook_exit` or the guaranteed `time_boxed` fallback. `CueKind.outro_start`
+     stays in the enum for a future (v2) detector to populate without a schema
+     change.
+  8. §3 gains an explicit exception for `raw.downbeat_times` being empty — found
+     by directly reading `feature_extractor/rhythm.py`: `_detect_downbeats`
+     returns `([], 0.0)` under 8 detected beats, so the unmodified formula
+     (`raw.downbeat_times[0]`) would raise `IndexError` on exactly the track that
+     most needs to quarantine cleanly to `status="excluded"`, since `derive_cues`
+     calls `derive_grid_origin` (step 1) before `quarantine` (step 6). Now:
+     `grid_start=free_intro_end=0.0`, `grid_confidence=raw.downbeat_confidence`
+     (already `0.0` in this case) — flows correctly into `status="excluded"`
+     instead of crashing.
