@@ -1,30 +1,23 @@
 # Feature Extractor — Spec
 
-**v3** — supersedes v2, see `archive/spec-v2.md`.
+**v2** — supersedes v1, see `archive/spec-v1.md`.
 
-**What changed in v3** (surfaced while designing `ingestion/orchestrator`, the
-first module to ever call `get_or_extract_features` concurrently — see that
-module's spec §6): `cache.py`'s caching mechanism gets two fixes, both confined
-to §5. (1) **Atomic writes** — `_write` was a plain `path.write_text(...)`,
-no atomicity; two different processes racing to cache-write the same
-`(content_hash, extractor_version)` key (identical audio content, different
-paths, same batch) could corrupt the cache file via interleaved writes. Now
-writes go to a uniquely-named temp file, then an atomic rename onto the final
-path — corruption is now structurally impossible regardless of how many
-processes race on the same key. (2) **Cross-process claim** — a concurrent
-caller for the same key now waits for the first claimer's result instead of
-redoing the (expensive, D6) extraction itself, via an atomically-created
-`.lock` sentinel file; the wait is bounded and self-healing (§5) so a lock
-orphaned by a crashed process (the crash risk `orchestrator`'s own spec
-documents) never becomes a permanent hang for every future caller. This is a
-version bump, not an amendment, for two reasons: §5's previous "one JSON file
-per key" claim is no longer strictly true at every instant (a transient
-`.lock` file can coexist during extraction) — an existing specific claim
-changing, not a gap being filled — and `get_or_extract_features` gains a
-genuinely new invariant (it can now legitimately block waiting on another
-caller, bounded by a timeout) where before it never could. Neither change
-touches `get_or_extract_features`'s signature or `RawFeatures`'s schema —
-only §5's internal mechanism and its own stated guarantees.
+**What changed in v2** (both found during code review, before the module's first
+merge — see `plan.md`): (1) `PerBarFeatures` gains `end_time` — v1 only stored
+`start_time`, which forced `loudness.py`/`vocal_band.py` to each independently guess
+a bar's end as "the next bar's start, or the literal end of the audio file for the
+last bar." That guess was wrong for every track's last bar (the real end is the last
+detected downbeat, not the file's end), silently widening the last bar's
+`energy_curve`/`vocal_band_energy` window into any trailing outro/silence. Each bar
+now carries its own true `end_time`, computed once where it's already known
+(`spectral_features.py`), removing the guess entirely. (2) §3 corrected — it
+described `AudioLoader` taking a `sampleRate` parameter, which doesn't exist on the
+installed Essentia build; the real technique (load at native rate, then a separate
+`Resample` pass) was implemented correctly and documented in code, but the spec text
+itself was never brought back in line. Fixed here. Neither change affects the
+public function signatures (`load_canonical`, `extract_features`,
+`get_or_extract_features` are all unchanged) — only `PerBarFeatures`'s schema and
+§3's description.
 
 **Layer:** `ingestion/` — first module in this layer.
 **v1 tooling:** Essentia (primary DSP engine) + librosa (cross-check only). No madmom.
@@ -227,76 +220,19 @@ issue. This is the right side of the tradeoff given D6's own justification ("ren
 don't re-analyse and duplicates collapse") — both of those properties hold under a
 raw-byte hash; tag-invariance was never the stated requirement.
 
-**v3: concurrency-safe caching.** `ingestion/orchestrator` (spec in progress) is the
-first module to ever call `get_or_extract_features` from multiple processes at once
-— it dispatches per-track work across a process pool (`joblib`/`loky`). Two different
-paths with identical audio content, submitted in the same batch, can both cache-miss
-the same `(content_hash, extractor_version)` key at the same moment. Two fixes,
-neither changing this function's signature:
-
-**Fix 1 — atomic write.** `_write` no longer writes the final path directly. It
-writes to a uniquely-named temp file in the same directory
-(`{key}.json.tmp.{pid}.{uuid4().hex}` — the pid+random suffix matters; a single
-fixed tmp name would just move the race one level down to two processes writing the
-*same* tmp file), then atomically renames it onto the final path (`Path.replace()`,
-`os.replace()` under the hood — atomic on both POSIX and Windows). This makes
-cache-file corruption structurally impossible, regardless of how many processes race
-on the same key.
-
-**Fix 2 — cross-process claim, so concurrent callers coordinate instead of
-duplicating expensive work.** Before extracting, a caller atomically tries to create
-a `{key}.lock` sentinel file via `os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)`
-— itself atomic, the same primitive real lockfile implementations use. Win the race
-→ extract, write atomically (fix 1), then remove the lock in a `finally` (a normal
-extraction exception still releases it, not just the success path). Lose the race →
-another process is already extracting this exact content; wait for its cache file to
-appear (polling every `_LOCK_POLL_INTERVAL_S`) instead of redoing the (expensive, D6)
-work.
-
-**Bounded wait, with self-healing reclaim — not an unbounded lock.** The wait is
-capped at `_LOCK_WAIT_TIMEOUT_S` (300.0s — roughly 94x this module's own measured
-~3.2s/track benchmark, §4: generous, but finite). This matters specifically because
-of `orchestrator`'s own documented worker-crash risk: a lock file left behind by a
-process that crashed mid-extraction (a native Essentia crash on malformed audio, not
-a normal Python exception this module's own `try`/`except` could catch) must never
-become a permanent hang for every future caller. On timeout, the waiting caller
-doesn't just fall back to a one-off redundant extraction — it deletes the
-presumably-stale lock and loops back to attempt its own claim. This is
-**self-healing**: the first caller to notice a stale lock clears it for every caller
-after it, not just for itself. A naive one-shot fallback (extract once, unclaimed,
-leave the stale lock in place) would leave that lock behind forever, forcing every
-subsequent caller for that key to independently wait out the same timeout, forever.
-
 ```
 get_or_extract_features(path: str, config: FeatureExtractorConfig) -> RawFeatures
-  content_hash = hash_file(path)                          # cheap, no decode
-  key = (content_hash, config.extractor_version)
-  loop until an overall deadline (_LOCK_WAIT_TIMEOUT_S from when this call started):
-    hit           -> load cached RawFeatures (JSON), return — no decode
-    claim wins    -> extract_features(path, config), write atomically (temp+rename),
-                     release the claim (always, even on failure), return/raise
-    claim loses   -> poll: wait for the cache file to appear, or for the claim
-                     to disappear (the claimer gave up without writing) and retry
-    past deadline -> treat the claim as stale, delete it, reset the deadline,
-                     retry claiming (self-healing — not a one-shot fallback)
+  1. content_hash = hash_file(path)                     # cheap, no decode
+  2. key = (content_hash, config.extractor_version)
+  3. hit  -> load cached RawFeatures (JSON, one file per key), return — no decode
+     miss -> extract_features(path, config), persist under key, return
 
 extract_features(path: str, config: FeatureExtractorConfig) -> RawFeatures
   # pure extraction, no cache lookup — always decodes and runs the full pipeline
 ```
 
-Cache storage still mirrors `llm_service`'s pattern
-(`resources/documentation/common/llm_service/spec.md` §9): disk-backed, one JSON
-file per key, under `FeatureExtractorConfig.cache_dir` — **with the v3 caveat** that
-a transient `{key}.lock` file can coexist alongside a key during extraction; it never
-persists past a successful or failed claim (barring the crash case §5 already
-designs around).
-
-**No new config field.** `_LOCK_POLL_INTERVAL_S`/`_LOCK_WAIT_TIMEOUT_S` are private
-module-level constants in `cache.py`, matching this module's existing pattern for
-implementer-chosen algorithm constants (e.g. `rhythm.py`'s `_DOWNBEAT_WINDOW_S`) —
-only genuinely per-user-tunable values live on `FeatureExtractorConfig`.
-
-**No new dependency** — `os.open`/`O_EXCL`, `Path.replace`, `time` are all stdlib.
+Cache storage mirrors `llm_service`'s pattern (`resources/documentation/common/llm_service/spec.md`
+§9): disk-backed, one JSON file per key, under `FeatureExtractorConfig.cache_dir`.
 
 **`feature_extractor_version` is a hand-maintained constant** (`config.py`), bumped
 whenever extraction logic changes (a new Essentia algorithm version, a changed
@@ -441,11 +377,7 @@ extract_features(path: str, config: FeatureExtractorConfig) -> RawFeatures
 - Every other module in §13's file layout gets its own test file, isolated: rhythm
   cross-check logic, per-bar feature computation, loudness windowing (§8's
   momentary→per-bar averaging is the one non-trivial piece of logic worth a direct
-  test), **content-hash/cache round-trip (hit vs. miss, version-bump invalidation,
-  and — v3 — concurrent-access coordination: two racing callers for the same key
-  extract exactly once, a failed extraction releases its claim so a waiter retries
-  immediately rather than hanging, an orphaned lock is reclaimed after
-  `_LOCK_WAIT_TIMEOUT_S`, and no `.tmp.*` file survives a successful write)**,
+  test), content-hash/cache round-trip (hit vs. miss, version-bump invalidation),
   riser detection on a synthetic monotonic-centroid-drift fixture.
 
 ---
@@ -461,8 +393,7 @@ src/ingestion/feature_extractor/
   config.py                 # FeatureExtractorConfig, EXTRACTOR_VERSION (§5, §12)
   loader.py                  # load_canonical() — 48kHz float32 stereo decode (§3)
   content_hash.py              # hash_file() — SHA-256 of raw bytes (§5)
-  cache.py                       # get_or_extract_features() — cache read/write,
-                                  # atomic write + cross-process claim (§5, v3)
+  cache.py                       # get_or_extract_features() — cache read/write (§5)
   rhythm.py                        # detect_rhythm() — bpm/beat_times/downbeats (§6)
   spectral_features.py               # compute_per_bar_features() (§7)
   loudness.py                          # compute_loudness() — LUFS/true_peak/energy_curve (§8)
@@ -477,8 +408,7 @@ tests/ingestion/feature_extractor/
   test_schema.py              # (only if any validation logic beyond field types exists)
   test_loader.py
   test_content_hash.py
-  test_cache.py                # hit/miss/version-bump invalidation, plus v3's
-                                # concurrent-access/atomicity/stale-lock coverage (§13)
+  test_cache.py                # hit/miss/version-bump invalidation
   test_rhythm.py                 # includes the librosa cross-check confidence logic
   test_spectral_features.py
   test_loudness.py                 # momentary -> per-bar averaging (§8)
@@ -500,7 +430,6 @@ tests/ingestion/feature_extractor/
 | `energy_curve[]` = `LoudnessEBUR128.shortTermLoudness` directly | Per-bar average of `momentaryLoudness` (§8) | The built-in short-term window (3s, fixed) doesn't align to bar boundaries at most tempos |
 | Vocal-mask thresholding/interpretation done here | Raw `vocal_band_energy[]` only; interpretation deferred to `cue_derivation` (§9) | Keeps this module's job "compute signal," not "decide what it means" — the D22 cost formula is a planning-adjacent concern |
 | Real Bollywood tracks (`music/`) as committed test fixtures | Synthetic in-process fixtures for the default suite; `music/` used only by a skip-guarded smoke test (§13) | `music/` is gitignored; the default suite must pass on a fresh clone with no local audio files present |
-| A shared in-memory coordination structure (e.g. a `multiprocessing.Manager` dict) for cache concurrency (v3, §5) | A file-system-based claim (`.lock` sentinel via `O_CREAT\|O_EXCL`) | A plain in-memory structure in one process is invisible to the separate OS processes `orchestrator`'s process-pool backend dispatches work to — the filesystem is the only thing every worker process actually shares |
 
 ---
 
@@ -511,4 +440,3 @@ tests/ingestion/feature_extractor/
 | Q1 | Does the phase-contrast downbeat heuristic (§6) hold up against `cue_derivation`'s D9 grid-origin logic in practice, or does its honestly-lower confidence quarantine too many tracks via D7? | Whether v1's downbeat approach is viable without revisiting the madmom/Xcode-license blocker |
 | Q2 | Is a single `bpm_confidence` penalty term (Essentia vs. librosa delta) enough signal, or does `cue_derivation`/D7 need the two raw estimates separately to reason about disagreement itself? | `RawFeatures.bpm_confidence` shape — currently a single scalar (§2, §6) |
 | Q3 | JSON cache file size at scale — `per_bar_features[]` with a 12-dim `chroma_vector` per bar could run to a few hundred KB per track for a long film song; worth confirming this doesn't become a real cost at a few hundred tracks | Cache storage format (§5) — currently assumed fine, unverified at scale |
-| Q4 | `_LOCK_WAIT_TIMEOUT_S` (300s, §5, v3) is a round, defensible default, not empirically tuned — is it right for much larger files than the ~268s benchmark track, where extraction could plausibly take meaningfully longer than "a few seconds"? | §5's timeout constant — currently assumed generous enough, unverified against large-file extraction times |
