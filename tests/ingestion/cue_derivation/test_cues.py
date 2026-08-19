@@ -174,3 +174,30 @@ def test_no_time_boxed_fallback_when_no_boundary_clears_time_box(
     )
 
     assert cue_outs == []
+
+
+def test_time_boxed_anchors_to_post_filter_cue_in(make_per_bar_features, make_raw_features):
+    per_bar = make_per_bar_features(n_bars=8, bpm=120.0)
+    raw = make_raw_features(per_bar, bpm=120.0, downbeat_confidence=0.7, riser_candidates=[])
+    # time_box_bars=32 bars @ 120bpm/4-per-bar = 64.0s.
+    # old (buggy) anchor = -10.0 (the dropped intro_end) -> target 54.0
+    #   -> would have picked the 60.0 boundary
+    # new (fixed) anchor = grid_start = 4.0 -> target 68.0
+    #   -> correctly picks the 70.0 boundary
+    phrase_grid = [
+        PhraseBoundary(position=60.0, strength=1.0, bars_since_previous=None),
+        PhraseBoundary(position=70.0, strength=1.0, bars_since_previous=None),
+    ]
+
+    _, cue_outs = emit_cues(
+        raw,
+        grid_start=4.0,
+        free_intro_end=-10.0,  # deliberately before grid_start -> intro_end cue gets filtered out
+        structure_template="edm",
+        hook_in=None,
+        hook_exit=None,
+        phrase_grid=phrase_grid,
+        config=CueDerivationConfig(),
+    )
+
+    assert cue_outs == [Cue(position=70.0, kind="time_boxed", confidence=0.3)]

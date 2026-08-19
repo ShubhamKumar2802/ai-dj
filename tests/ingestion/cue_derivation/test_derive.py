@@ -26,7 +26,12 @@ def test_derive_cues_returns_fully_populated_result(make_per_bar_features, make_
 def test_derive_cues_handles_empty_downbeat_times_without_crashing(
     make_per_bar_features, make_raw_features
 ):
-    per_bar = make_per_bar_features(n_bars=24, bpm=120.0)
+    # Matches feature_extractor's real contract: _detect_downbeats returns
+    # ([], 0.0) together, and compute_per_bar_features zips downbeats[:-1]/
+    # downbeats[1:] — per_bar_features is empty whenever downbeat_times is,
+    # not just downbeat_times alone (this is what actually reaches
+    # derive_cues for a track with too few beats to grid at all).
+    per_bar = make_per_bar_features(n_bars=0, bpm=120.0)
     raw = make_raw_features(per_bar, bpm=120.0, downbeat_confidence=0.0, downbeat_times=[])
     config = CueDerivationConfig()
 

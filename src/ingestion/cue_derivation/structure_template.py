@@ -2,6 +2,7 @@ import statistics
 from typing import Literal
 
 from ingestion.cue_derivation.config import CueDerivationConfig
+from ingestion.cue_derivation.cues import bars_to_seconds
 from ingestion.cue_derivation.schema import PhraseBoundary
 from ingestion.feature_extractor.schema import RawFeatures
 
@@ -20,7 +21,7 @@ def classify_structure_template(
     than 2 phrase_grid gaps. Combine: B abstains -> A's vote; both present
     and agree -> that vote; both present and disagree -> "unknown".
     """
-    intro_threshold_seconds = config.edm_intro_bars_threshold * raw.beats_per_bar * 60.0 / raw.bpm
+    intro_threshold_seconds = bars_to_seconds(config.edm_intro_bars_threshold, raw)
     intro_vote: Literal["edm", "film"] = (
         "edm" if free_intro_end >= intro_threshold_seconds else "film"
     )
