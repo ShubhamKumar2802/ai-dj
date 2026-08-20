@@ -28,6 +28,7 @@ wheels/
 src/common/llm_service/examples/
 src/ingestion/feature_extractor/examples/
 src/ingestion/cue_derivation/examples/
+src/ingestion/orchestrator/examples/
 
 # testing tracks
 /music
