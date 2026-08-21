@@ -50,34 +50,22 @@ StereoPCM:
                                # value itself, not assumed by the caller; every
                                # function in this module asserts it rather than
                                # trusting the field silently
-
-Junction:                     # trimmed MixPlan.junctions[] entry (§5.2) — same
-                               # field names as the full contract, Milestone-B
-                               # fields simply unpopulated/defaulted for now, so a
-                               # Milestone-A fixture stays valid once B lands
-  from_track      : str       # track id
-  to_track        : str       # track id
-  cue_out         : float     # seconds, into track A
-  cue_in          : float     # seconds, into track B
-  strategy_tier   : int       # 2 | 3 | 4 | 5 — only 3 implemented (§4)
-  ramp_bars       : int       # 0 in v1 (D18) — always 0 for the tiers this spec
-                               # implements; present on the contract, not acted on
-  length_bars     : int       # 0 for tier 3 (§3) — real for tier 2 (Milestone B)
-  rate_a          : float     # default 1.0 — Milestone B (D19)
-  rate_b          : float     # default 1.0 — Milestone B (D19)
-  gain_db_a       : float     # default 0.0 — Milestone A has no LUFS data to set
-                               # this from; real value is playlist_renderer's
-                               # concern once feature_extractor exists
-  gain_db_b       : float     # default 0.0
-  envelopes       : list[Envelope]   # [] in Milestone A — tier 2's automation
-                                       # curves (§1.9's worked example), Milestone B
-
-Envelope:                     # Milestone B shape, pinned now so tier 2 doesn't
-                               # need a schema change later
-  target       : "low" | "mid" | "high" | "crossfader"
-  side         : "a" | "b"
-  breakpoints  : list[tuple[float, float]]   # (bar_offset, value) pairs
 ```
+
+**`Junction` and `Envelope` are imported from `common/contracts/schema.py`**, not
+defined here — `schema.py` re-exports them so this module's public surface is
+unchanged. Their field lists live in
+`resources/documentation/processing/edge_builder/spec.md` §2, which is now their
+single owner.
+
+They were originally defined here, with `playlist_renderer` importing them ("one
+contract, one owner"). That ownership predated `processing/edge_builder`, which is
+what actually *produces* a `Junction` — leaving the contract in `render/` would have
+made the planning layer depend on the render layer, and moving it into `processing/`
+would only have inverted the same problem. A neutral shared location leaves neither
+layer depending on the other. Nothing about the fields changed in the move.
+
+`StereoPCM` stays here: it is audio-only and never crosses into planning.
 
 ---
 
@@ -211,7 +199,8 @@ src/render/transition_renderer/
   __init__.py            # public exports: StereoPCM, Junction, Envelope,
                           # render_junction, register_strategy,
                           # UnregisteredStrategyError
-  schema.py                # StereoPCM, Junction, Envelope (§2)
+  schema.py                # StereoPCM (§2); re-exports Junction/Envelope from
+                            # common.contracts.schema — not defined here (§2)
   errors.py                 # UnregisteredStrategyError
   render.py                   # render_junction() — dispatch (§4)
   strategies/
@@ -248,3 +237,27 @@ tests/render/transition_renderer/
 |---|---|---|
 | Q1 | `FADE_MS = 5` (§5) is an unvalidated guess at "long enough to kill a click, short enough to stay a cut" — has anyone confirmed this by ear against the walking skeleton's actual output? | Whether Milestone A's implementation needs a constant change before it's "done" |
 | Q2 | Where exactly does a track's own `cue_in`/`cue_out` (for the body *outside* any junction) live in `MixPlan.tracks[]`'s trimmed Milestone-A shape? Referenced here (§5) but owned by `playlist_renderer`'s spec | Cross-spec consistency — resolve when drafting `playlist_renderer/spec.md` |
+
+---
+
+## Amendments
+
+- **2026-08-21** — `Junction` and `Envelope` moved out of this module's `schema.py`
+  to `common/contracts/schema.py`, surfaced while drafting
+  `resources/documentation/processing/edge_builder/spec.md` (§2 of that spec) — the
+  first module that actually *produces* a `Junction`. Keeping the contract here would
+  have made the planning layer depend on the render layer; moving it into
+  `processing/` would only have inverted that. **No field changed**, and `schema.py`
+  re-exports both names, so this module's public surface (§8's `__init__.py` exports)
+  is identical.
+
+  Recorded as an amendment rather than a v2, despite the README's decision table
+  listing "a file path" under *New version*: that table's operative test is *"does
+  code already implementing the old spec still comply?"*, and **no code implements
+  this spec yet** (`overview.md` row 6: Spec Done, Code —), so nothing can fail to
+  comply. Same justification `cue_derivation`'s own 2026-08-18 amendment used. Should
+  this module get built before the move actually lands, re-evaluate as a version bump.
+  1. §2 — `Junction`/`Envelope` field blocks replaced by an import note pointing at
+     `edge_builder` spec §2 as their single owner; `StereoPCM` unchanged and still
+     owned here.
+  2. §8 — `schema.py`'s comment updated to record the re-export.

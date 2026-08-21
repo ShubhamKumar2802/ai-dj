@@ -45,8 +45,9 @@ loop here.
 ```
 MixPlan:                      # trimmed §5.2 shape for Milestone A
   tracks    : list[TrackRef]
-  junctions : list[Junction]  # imported from transition_renderer's schema.py —
-                               # not redefined here; one contract, one owner
+  junctions : list[Junction]  # imported from common/contracts/schema.py — not
+                               # redefined here; one contract, one owner (see
+                               # processing/edge_builder spec §2, and ## Amendments)
 
 TrackRef:
   id       : str
@@ -186,3 +187,22 @@ tests/render/playlist_renderer/
 |---|---|---|
 | Q1 | **Shared with `transition_renderer`'s open questions.** Milestone A's `render_junction` contract (produces A's full body + B to its natural end) only works because there's exactly one junction. Once Milestone B needs N>2 tracks, does the D17 three-way `A_body`/`junction`/`B_body` split get implemented here (this module slices each track's body, `transition_renderer` only ever renders the blend window), or does `transition_renderer` grow a "max duration for B" parameter instead? | `render_mix()`'s design once multi-junction `MixPlan`s exist (Milestone B, after `edge_builder`/`path_search`) |
 | Q2 | Where does `load_audio` actually live — a shared utility both `feature_extractor` and this module import, or does this module get its own thin wrapper around the same canonical loader? | Avoiding two independent implementations of "decode to 48kHz float32 stereo" (D25) drifting apart |
+
+---
+
+## Amendments
+
+- **2026-08-21** — `Junction`'s owning module changed from
+  `render/transition_renderer/schema.py` to `common/contracts/schema.py`, surfaced
+  while drafting `resources/documentation/processing/edge_builder/spec.md` (§2 of
+  that spec) — the first module that actually *produces* a `Junction`. **No field
+  changed**, and this module still imports rather than redefines it; only the import
+  source moved. See `transition_renderer`'s own `## Amendments` for the full
+  rationale and for why this is an amendment rather than a version bump (no code
+  implements either render spec yet — `overview.md` rows 6–7: Spec Done, Code —).
+  1. §2 — `MixPlan.junctions[]`'s comment updated to name the new source.
+
+  `MixPlan`/`TrackRef` themselves stay owned here for now. They are produced by
+  `path_search`, which isn't specced yet; moving them alongside `Junction` would
+  restructure this spec for a module nobody has written (tracked as `edge_builder`
+  spec §12 Q6).
