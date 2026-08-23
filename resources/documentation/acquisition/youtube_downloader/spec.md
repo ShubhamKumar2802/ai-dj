@@ -29,9 +29,13 @@ together is the caller's job (a future top-level pipeline entry point, not yet
 specced).
 
 **v1 scope, stated explicitly:**
-- One URL = one video = one output file. Playlist URLs are not expanded
+- One URL = one video = one output file, **inside `download_tracks` itself**.
+  Playlist URLs passed directly to `download_tracks` are not expanded
   (`noplaylist: True`, §5) — a playlist URL downloads at most the single target
-  video, never silently fans out into N files.
+  video, never silently fans out into N files. §12 adds a separate, explicit,
+  opt-in enumeration step the *caller* invokes before `download_tracks` if they
+  want playlist support — `download_tracks`'s own one-URL-in-one-file-out
+  contract is untouched by that addition (see `## Amendments`).
 - No search-by-title (rejected in scoping, §10) — every input is a URL the caller
   already resolved.
 - **Idempotent across runs, by video id.** A `video_id` already recorded in the
@@ -239,6 +243,12 @@ download_tracks(
     urls: list[str],
     config: DownloadConfig,
     on_progress: OnProgress | None = None,
+    *,
+    _worker: Callable[[str, DownloadConfig, str], DownloadedTrack | DownloadFailure]
+             = _download_one,   # test seam — swap in a fake per-URL worker,
+                                  # same role _worker plays in
+                                  # ingestion.orchestrator.ingest_tracks (see
+                                  # ## Amendments)
     _run_id: str | None = None,   # test seam — overrides the auto-generated
                                     # uuid4 so tests can assert on a known
                                     # value instead of a random one
@@ -512,6 +522,13 @@ reality, not a design flaw.
   video end-to-end through the real `YtDlpDownloader` and asserts the output file
   exists and is a valid audio file, then calls `download_tracks` on the same URL
   a second time and asserts the manifest hit (no second network fetch).
+- **`test_playlist.py`** (§12) — `extract_playlist_id`'s recognized/unrecognized
+  URL shapes (mirrors `test_video_id.py`'s fixture-table style); `expand_playlist_url`
+  with `yt_dlp.YoutubeDL` mocked (mirrors `test_downloader_ytdlp.py`'s fake
+  context-manager pattern): entries' `url` fields returned in order, `None`
+  placeholder entries filtered, an empty `entries` list returning `[]` not `None`,
+  and a non-playlist URL returning `None` **without** `YoutubeDL` ever being
+  constructed.
 
 ---
 
@@ -529,10 +546,13 @@ src/acquisition/youtube_downloader/
   manifest.py                          # ManifestEntry, read/write_manifest_entry (§6)
   worker.py                               # _download_one(), _default_downloader (§3)
   download.py                                # download_tracks() dispatch loop (§4)
+  playlist.py                                   # extract_playlist_id(),
+                                                 # expand_playlist_url() (§12)
   examples/
     example_download.py              # manual smoke script, mirrors
                                       # orchestrator's example_ingest.py —
-                                      # gitignored, not part of the test suite
+                                      # gitignored, not part of the test suite;
+                                      # --playlist flag added (§12)
 
 tests/acquisition/youtube_downloader/
   conftest.py               # fixture DownloadInfo/ManifestEntry values + fake Downloader
@@ -542,6 +562,7 @@ tests/acquisition/youtube_downloader/
   test_downloader_ytdlp.py             # §8
   test_download.py                        # §8
   test_real_download_smoke.py                # §8
+  test_playlist.py                              # §12
 ```
 
 **New dependency: `yt-dlp`** (added at implementation time via `uv add yt-dlp`,
@@ -561,7 +582,7 @@ only stdlib (`json`, `os`, `uuid`, `datetime`) — no new dependency, mirroring
 | No idempotency at all — every call re-downloads everything | Persisted `video_id`-keyed manifest, real dedup across runs (§6) | Reopened during scoping specifically because the user wants repeated runs against overlapping track lists (the normal megamix-building workflow) not to re-hit YouTube/re-transcode every time |
 | Parallel downloads (mirroring `orchestrator`'s `joblib`/`loky` pattern) | Sequential dispatch (§4) | Downloads are network-bound against one upstream host; concurrent connections raise real throttling/blocking risk that doesn't apply to `orchestrator`'s CPU-bound, crash-isolation problem |
 | Placing this module under `ingestion/` (grouped with `feature_extractor`/`cue_derivation`/`orchestrator`) | New `acquisition/` layer | `ingestion/` in this codebase specifically means "audio in, expensive, cached per track" analysis (design-v3 stage 1); this module does no analysis at all — it's external I/O that produces the input `ingestion/orchestrator` already expects |
-| Expanding playlist URLs into many tracks | `noplaylist: True` — a playlist URL yields at most one video (§1, §5) | Keeps the URL-in/file-out contract 1:1 and predictable; silent fan-out from one input to N outputs would break the caller's ability to reason about `len(urls)` vs. `len(result.tracks) + len(result.failures)` |
+| Expanding playlist URLs *automatically, inside* `download_tracks` | `noplaylist: True` — a playlist URL yields at most one video there (§1, §5) | Keeps `download_tracks`'s URL-in/file-out contract 1:1 and predictable; silent fan-out from one input to N outputs would break the caller's ability to reason about `len(urls)` vs. `len(result.tracks) + len(result.failures)`. This rejects *implicit* expansion inside `download_tracks` specifically — it does not reject playlist support outright; §12 adds it as a separate, explicit, opt-in step instead (see `## Amendments`) |
 | Full `llm_service`-style `factory.py` + `providers/registry.py` (`register_downloader`/`get_downloader_factory`, lookup-by-name) | Thin `Downloader` `Protocol` (§2, §5) + one directly-imported `YtDlpDownloader`, no registry | `llm_service`'s registry earns its cost because multiple concrete LLM providers are a real, current need (orchestrator/llm_service specs already argue this). Here there is exactly one real implementation today and no second one on the table — a name-keyed registry would be built for a swap that isn't concretely happening yet |
 | No interface at all — a bare `_run_ytdlp()` function called directly from `worker.py` | `Downloader` `Protocol` boundary (§2, §5), even with only one implementation | This specific domain has real, non-hypothetical precedent for library churn (`yt-dlp` is itself a fork born when `youtube-dl` went stale) — unlike most speculative interfaces, "we might need to swap this" is grounded in something that already happened once. A `Protocol` costs one small file and keeps the swap contained to `downloader_ytdlp.py` |
 | `download_tracks` → `ingest_tracks` convenience wrapper (e.g. `acquire_and_ingest()`) | Two fully separate calls; caller wires them together (§1, §11 Q2) | Keeps `acquisition/` with zero dependency on `ingestion/` — not even a one-way import. Considered and explicitly rejected by the user during scoping |
@@ -576,9 +597,101 @@ only stdlib (`json`, `os`, `uuid`, `datetime`) — no new dependency, mirroring
 
 | # | Question | Blocks |
 |---|---|---|
-| Q1 | Should a future version support playlist expansion or search-by-title, and if so does that change `DownloadConfig`/`download_tracks`'s signature or add a new entry point? | Nothing in v1 — deferred scope, not blocking this spec |
+| Q1 | Should a future version support playlist expansion or search-by-title, and if so does that change `DownloadConfig`/`download_tracks`'s signature or add a new entry point? | **Playlist half resolved** — §12 adds `expand_playlist_url()` as a new, separate entry point; `DownloadConfig`/`download_tracks`'s signatures are untouched (see `## Amendments`). Search-by-title remains open, deferred |
 | Q2 | Does the eventual top-level pipeline (chaining this module → `ingestion.orchestrator.ingest_tracks`) want a single combined entry point, or stay as two explicit calls the caller wires together? | Not this module's concern (§1) — relevant once a top-level CLI/script is specced |
 | Q3 | Is `retries=3` (yt-dlp's own retry option, §2/§5) the right default, or does YouTube's real-world transient failure rate need something different? | Low blast radius — a config default, easy to change later with no contract impact |
 | Q4 | Should the manifest key incorporate `DownloadConfig`'s format/quality settings (versioning it the way `feature_extractor`'s key includes `extractor_version`), so a settings change invalidates stale entries instead of silently returning them (§7)? | Correctness of idempotency under a changed `DownloadConfig` — currently a known, stated limitation, not yet a bug someone has hit |
 | Q5 | Does `extract_video_id` need to cover `music.youtube.com` or other YouTube-family domains for v1's real usage, or is `youtube.com`/`youtu.be` sufficient (§7)? | Idempotency coverage breadth — low blast radius, fails open (just re-downloads) rather than incorrectly |
 | Q6 | Should `DownloadedTrack`/`DownloadFailure` carry their own `run_id` (not just `DownloadResult`), for a future consumer that persists tracks independently of their batch (§2)? | Schema shape if that need materializes — no current consumer needs it |
+
+---
+
+## 12. Playlist expansion (`playlist.py`)
+
+**Added 2026-08-23** (see `## Amendments`) — a separate, explicit, opt-in step for
+enumerating a playlist's video URLs, invoked by the *caller* before
+`download_tracks`. `download_tracks`/`_download_one`/`Downloader.run()`/
+`noplaylist: True` (§3–§5) are entirely untouched by this addition — this section
+adds new functions, it does not modify anything §1–§11 already committed to.
+
+```
+extract_playlist_id(url: str) -> str | None
+  # Pure stdlib (urlparse/parse_qs), no yt_dlp — same host-restriction convention
+  # as extract_video_id (§6): only youtube.com/www.youtube.com. Looks for a
+  # `list=` query param regardless of path, so it recognizes both
+  # /watch?v=X&list=Y (a single video viewed in playlist context) and the bare
+  # /playlist?list=Y shape uniformly. None if the host doesn't match or no
+  # `list=` param is present — never raises, matching extract_video_id exactly.
+
+expand_playlist_url(url: str, config: DownloadConfig) -> list[str] | None
+  # None from extract_playlist_id short-circuits to None here too — no yt-dlp
+  # call at all for a URL that isn't playlist-shaped.
+  # Otherwise: normalizes to the canonical https://www.youtube.com/playlist?list=<id>
+  # URL and queries it once via
+  #   with yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True,
+  #                          "retries": config.retries}) as ydl:
+  #       info = ydl.extract_info(canonical_url, download=False)
+  # (download=False — this never downloads anything, purely metadata) — then
+  # returns [entry["url"] for entry in info.get("entries") or [] if entry]
+  # (defensive None-entry filter — yt-dlp's entries lists have historically
+  # carried None placeholders for unavailable videos in some cases). An empty
+  # playlist returns [] (still a recognized playlist, just empty) — only an
+  # unrecognized URL returns None. No try/except — matches downloader_ytdlp.py's
+  # own convention of letting yt-dlp/network exceptions propagate raw, since this
+  # isn't part of the per-URL DownloadResult pipeline that needs a typed failure
+  # value (§3).
+```
+
+**Why normalize to the canonical playlist URL rather than follow yt-dlp's own
+redirect:** querying the literal `watch?v=X&list=Y` shape with `extract_flat:
+True` doesn't yield `entries` directly — it returns a one-hop `"_type": "url"`
+stub pointing at the canonical `playlist?list=Y` URL, confirmed by a real query
+against a live playlist during scoping. Extracting the `list=` id and querying
+the canonical URL directly gets a `"_type": "playlist"` result with a concrete
+`entries` list in one network call, rather than two.
+
+**Why each entry's `url` field needs no reconstruction:** confirmed against a
+real 100-video playlist that every entry's `url` field is already in the exact
+`https://www.youtube.com/watch?v=<id>` shape `extract_video_id()` (§6) already
+recognizes — `entry["url"]` feeds straight into `download_tracks()` unchanged.
+
+**Caller usage** (not this module's own code, since `acquisition/` stays with
+zero dependency on any wiring beyond itself — §1, §10): expand first, then
+download —
+```python
+urls = expand_playlist_url(playlist_url, config) or [playlist_url]
+result = download_tracks(urls, config)
+```
+`examples/example_download.py`'s `--playlist` flag (§9) demonstrates exactly this
+pattern for manual use.
+
+---
+
+## Amendments
+
+- **2026-08-23** — Pre-implementation completion pass: no code exists against this
+  spec yet, so this is additive/clarifying (README's amendment column), never a
+  public-contract change — `download_tracks`'s existing params (`urls`, `config`,
+  `on_progress`, `_run_id`) are all unchanged. §4's code block showed only
+  `_run_id` as a test seam, but §8's testing strategy already said
+  `test_download.py` exercises dispatch/partial-failure/progress-callback
+  behavior "using a fake `_download_one`" — a seam §4 omitted. Resolved by adding
+  `_worker: Callable[[str, DownloadConfig, str], DownloadedTrack | DownloadFailure] = _download_one`
+  as a second keyword-only test seam alongside `_run_id`, mirroring
+  `ingestion.orchestrator.ingest_tracks`'s `_worker`/`_backend` pattern exactly
+  (§4 already cites that module as the seam-pattern precedent).
+- **2026-08-23** — **Playlist expansion added (new `## 12`).** The user asked
+  whether the example script could download a playlist; confirmed that
+  `noplaylist: True` (§1, §5) already deliberately prevents that inside
+  `download_tracks`, and that this was a considered v1 decision (§10), not an
+  oversight. Added `playlist.py`'s `extract_playlist_id()`/`expand_playlist_url()`
+  as a separate, explicit, opt-in step the caller runs *before* `download_tracks`
+  — every existing signature, field, and invariant in §1–§11 is untouched
+  (`download_tracks` itself has zero new parameters), so per
+  `resources/documentation/README.md`'s amendment rule this is additive scope
+  growth, not a version bump. §10's playlist rejected-alternatives row is
+  narrowed to specifically reject *automatic* expansion inside `download_tracks`;
+  it never rejected playlist support in any form. §11 Q1 is now half-resolved
+  (playlist half; search-by-title remains open). Design confirmed against a real
+  100-video playlist during scoping (§12's own rationale), not assumed from
+  yt-dlp's docs alone.

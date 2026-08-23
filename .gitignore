@@ -30,6 +30,7 @@ src/ingestion/feature_extractor/examples/
 src/ingestion/cue_derivation/examples/
 src/ingestion/orchestrator/examples/
 src/processing/edge_builder/examples/
+src/acquisition/youtube_downloader/examples/
 # spec-kit skills — vendored/generated, not part of this repo's own spec workflow
 .claude/skills/speckit-*/
 # speficy folder
