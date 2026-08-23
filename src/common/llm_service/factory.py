@@ -44,8 +44,7 @@ def load_config(
     api_key = os.environ.get("OPEN_CODE_ZEN_API_KEY", "")
     if not api_key:
         raise ValueError(
-            "OPEN_CODE_ZEN_API_KEY is not set — add it to .env "
-            f"(checked {resolved_env_path})"
+            f"OPEN_CODE_ZEN_API_KEY is not set — add it to .env (checked {resolved_env_path})"
         )
 
     data: dict = {}

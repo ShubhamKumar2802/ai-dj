@@ -309,8 +309,11 @@ uses. Internally, `run()`:
        "noplaylist": True,
        "retries": config.retries,
        "postprocessors": [
-           {"key": "FFmpegExtractAudio", "preferredcodec": config.audio_format,
-            "preferredquality": config.audio_quality},
+           {
+               "key": "FFmpegExtractAudio",
+               "preferredcodec": config.audio_format,
+               "preferredquality": config.audio_quality,
+           },
            *([{"key": "FFmpegMetadata"}] if config.embed_metadata else []),
        ],
    }

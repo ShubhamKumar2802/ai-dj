@@ -213,7 +213,7 @@ fallback, leaving D27's stated preference order unused; and D10 explicitly names
 | `energy` | `|energy_curve_a[out_bar] − energy_curve_b[in_bar]|` over `energy_full_cost_delta`, clamped to 1. **Absolute, not signed** — deliberate shaping of rise and fall is the path-level arc (§1.10), so an edge must not prefer "louder next" on its own | D3, D23 |
 | `vocal` | **D22 verbatim**: `vocal_mask_a[out_bar] + vocal_mask_b[in_bar]`, each side first normalised against that track's own 95th-percentile `vocal_mask` (the raw signal is unbounded band energy), then halved to land in `[0,1]` | **D22** |
 | `cue_kind` | mean of the two sides' preference costs (below) | D27, D12 |
-| `phrase` | `1 − strength` of the nearest `PhraseBoundary` within `phrase_tolerance_s` of the cue, per side, averaged; `1.0` when no boundary is near | D8, D10 |
+| `phrase` | `1 − clamp(strength, 0, 1)` of the nearest `PhraseBoundary` within `phrase_tolerance_s` of the cue, per side, averaged; `1.0` when no boundary is near (see `## Amendments` — the clamp) | D8, D10 |
 | `tier_penalty` | §5's template-conditioned table | **D5**, §1.9 |
 
 **Cue-kind preference costs** map **D27**'s preference *order* onto the real `CueKind`
@@ -248,6 +248,12 @@ key_confidence_b)` for `key`, and each `Cue.confidence` for its side of `cue_kin
 This keeps every confidence soft (**D10**) rather than letting it gate; the one place
 confidence becomes a hard exclusion is `status`, which `cue_derivation` already
 decided (D7).
+
+`key_confidence` is `None` exactly when `key` is (both nullable together, per
+`ingestion/orchestrator`'s `Track` contract) — treated as `0.0` in the `min()` above
+(see `## Amendments`). This collapses to the same neutral `0.5` either way `key_cost`
+would already produce from a null key via §3's `key_distance`, so it is a
+formalisation of the formula's only sane reading, not a new behaviour.
 
 **Half- and double-time** (`allow_half_double_time`, default on): the `tempo` ratio is
 computed against `bpm_b`, `2·bpm_b` and `bpm_b / 2`, and the smallest is taken. A
@@ -354,7 +360,10 @@ Envelope(target="crossfader", side="a", breakpoints=[(0, 0.0), (12, 1.0)])
 Read as: B's lows killed until bar 8 then ramped to unity over 4 bars; A's lows held at
 unity until bar 8 then ramped to kill; crossfader travelling A→B across bars 0–12.
 Tiers 3 and 4 emit `envelopes=[]`; tier 5 emits a single `high`/`a` ramp over its 8
-bars. Tier 4's echo-out **cannot** be expressed in the current `Envelope` contract at
+bars — `Envelope(target="high", side="a", breakpoints=[(0, 0.0), (length_bars_tier5,
+1.0)])` (see `## Amendments`; this spec previously gave the bar count but not the
+literal breakpoints). Tier 4's echo-out **cannot** be expressed in the current
+`Envelope` contract at
 all — `target` has no delay member — so its delay stays the renderer's internal
 business (§12 Q2).
 
@@ -451,8 +460,10 @@ reproducibility record, and is already what design-v3 §5.2's `MixPlan.config` c
   §6 exactly; `gain_db_*` left at `0.0`.
 - `test_build.py`: the argmin actually being the minimum over a small hand-enumerable
   grid; the stored `plan` corresponding to the winning combination (D4's "store the
-  argmin"); `cost` equalling the sum of its `terms`; pairs with no viable junction
-  **absent from** `edges` rather than present with a sentinel; no self-edges.
+  argmin"); `cost` matching §4's weighted formula applied to the stored `terms` (see
+  `## Amendments` — not a literal unweighted `sum(terms)`, which would contradict
+  §2's `[0,1]` claim); pairs with no viable junction **absent from** `edges` rather
+  than present with a sentinel; no self-edges.
 - `schema.py`/`config.py` have no dedicated test files — plain data classes, no
   behaviour.
 
@@ -477,8 +488,13 @@ src/processing/edge_builder/
   junction_plan.py                    # build the winning Junction (§6)
   build.py                              # build_edges() — vectorised argmin (§7, §8)
   examples/
-    example_build_edges.py                # manual smoke script over a real ingested
-                                           # pool — gitignored, not part of the suite
+    example_build_edges.py                # manual smoke script over a hand-built
+                                           # synthetic pool — gitignored, not part
+                                           # of the suite
+    example_build_edges_from_music.py     # end-to-end: real ingest_tracks() over
+                                           # music/*.mp3 -> real Track[] -> build_edges();
+                                           # also gitignored, not part of the suite
+                                           # (see ## Amendments)
 
 tests/processing/edge_builder/
   conftest.py               # synthetic Track builders — reuse orchestrator's and
@@ -492,7 +508,8 @@ tests/processing/edge_builder/
 ```
 
 `src/processing/edge_builder/examples/` needs a `.gitignore` entry at implementation
-time, alongside the three sibling `examples/` lines already there.
+time, alongside the sibling `examples/` lines already there (see `## Amendments` —
+the count of pre-existing sibling lines was slightly off).
 
 ---
 
@@ -524,3 +541,59 @@ time, alongside the three sibling `examples/` lines already there.
 | Q6 | Should `MixPlan`/`TrackRef` join `Junction` in `common/contracts/` when `path_search` is specced (§2)? | Where `path_search`'s output contract lives — deferred deliberately until that module exists |
 | Q7 | `length_bars_tier2 = 16` against **F8**'s warning that 16 does not divide 12-bar phrasing, so a swap starting on a boundary ends 4 bars into the next phrase | Tier-2 musicality on a 12-bar-phrased library; design-v3 Q9 already tracks the same question for the library as a whole |
 | Q8 | Once the eval harness exists, is it worth fitting the seven `w_*` weights and the tier-penalty tables from collected **pairwise** preferences — a regularised ranking fit that keeps the formula and learns only its constants, with §8's hand-tuned defaults as the prior — rather than continuing to hand-tune? | Nothing today: both hand-tuning and fitting are gated on the same harness. Recorded because it is the most likely direction this module evolves, and because it stays D14-compatible (`junction_cost = Σ wᵢ·termᵢ` is unchanged; determinism, millisecond re-runs, JSON-fixture tests and per-term explainability all survive). §2's `CostTerms` is the feature vector it would need, and D26's `[0,1]` normalisation is what would make regularising toward the prior meaningful |
+
+---
+
+## Amendments
+
+- **2026-08-23** — Implementation completion pass: `common/contracts/` and
+  `processing/edge_builder/` (plus their tests) were written against this spec for
+  the first time. Every change below is additive/clarifying (README's amendment
+  column — rationale, internal detail) — no schema field, function signature, file
+  path, or invariant this document already committed to changed.
+  1. **`cost` vs. `CostTerms` weighting (§4, §9)** clarified: §9 described the
+     `test_build.py` invariant as "`cost` equalling the sum of its `terms`," which
+     read as a literal unweighted `sum(terms)`. That reading contradicts §2's "every
+     field already normalised to `[0,1]`" the moment any weight exceeds `1.0`
+     (`w_vocal` defaults to `1.2`). §4's `junction_cost` formula was always the
+     correct one — `CostTerms` stores each term's raw `[0,1]` value, and `cost` is
+     that formula applied to them. §9 now says so explicitly.
+  2. **Null `key_confidence` in the confidence blend (§4)** made explicit:
+     `key_confidence` is `None` exactly when `key` is (both nullable together, per
+     `ingestion/orchestrator`'s `Track` contract); it is treated as `0.0` in the
+     `min()` feeding `confidence_blend`. This collapses to the same neutral `0.5`
+     `key_cost` already produces from a null key via §3, so it changes nothing
+     observable — it just states the formula's only sane reading for a case §4
+     previously left implicit.
+  3. **Tier-5 envelope breakpoints (§6)** made explicit: `Envelope(target="high",
+     side="a", breakpoints=[(0, 0.0), (length_bars_tier5, 1.0)])`. §6 previously gave
+     the bar count (`8`) via §1.9's prose but not literal breakpoints, unlike tier
+     2's worked example.
+  4. **§10's `.gitignore` note** corrected: it claimed "three sibling `examples/`
+     lines already there," but the file has four (three from `ingestion/*` plus one
+     from `common/llm_service/`, a different layer) — a factual slip about existing
+     repo state, not a behavior change.
+- **2026-08-23** — **`examples/example_build_edges_from_music.py` added (§10)**: a
+  second manual smoke script, sibling to `example_build_edges.py`, that chains the
+  real `ingestion` pipeline (`ingest_tracks` over `music/*.mp3`) directly into
+  `build_edges()` — real `Track` objects, no JSON round-trip, no synthetic fixtures.
+  Purely additive to §10's file layout; no schema, signature, or invariant changed.
+  While fixing the pre-existing inaccuracy this surfaced (§10's listing for
+  `example_build_edges.py` had always claimed it ran "over a real ingested pool,"
+  which was never true — it uses a hand-built synthetic pool; that description now
+  correctly belongs to this new script instead).
+- **2026-08-23** — **`phrase` term formula corrected (§4)**: found by running
+  `build_edges` over real ingested tracks for the first time
+  (`examples/example_build_edges_from_music.py`), not by the synthetic-fixture test
+  suite. `PhraseBoundary.strength` (`ingestion/cue_derivation/phrase_grid.py`) is a
+  raw Foote-checkerboard novelty score — unbounded in practice (observed as high as
+  ~8.6 on a real track) and occasionally negative, never a `[0,1]` confidence. §4's
+  original `1 − strength` formula silently assumed the latter, so `phrase` (and
+  therefore `cost`) came out arbitrarily outside `[0,1]`/negative on real data,
+  violating D26. Fixed by clamping: `1 − clamp(strength, 0, 1)`. This is a
+  behavior-visible bug fix restoring an invariant (D26) this spec already committed
+  to, not a new one — same amendment-vs-version standing as any other internal
+  correction (README's amendment column: "an added clarification" covers a fix that
+  restores an already-stated invariant without touching a schema field, signature,
+  or file path). `test_cost.py` gained two adversarial cases (`strength` `> 1` and
+  `< 0`) covering this directly.
