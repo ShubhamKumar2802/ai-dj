@@ -21,6 +21,10 @@ class Junction:
 
     ramp_bars: int
     length_bars: int
+    # Seconds per bar of track A — the unit `length_bars` and every
+    # `Envelope.bar_offset` are counted in. Required, no default: without it the
+    # renderer cannot convert either into samples (edge_builder spec v2 §6).
+    bar_seconds: float
 
     rate_a: float
     rate_b: float

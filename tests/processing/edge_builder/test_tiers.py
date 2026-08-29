@@ -18,6 +18,15 @@ def test_eligible_pool_drops_bar_less_tracks(make_track):
     assert [t.id for t in pool] == ["has-bars"]
 
 
+def test_eligible_pool_drops_non_positive_bpm(make_track):
+    # Guards junction_plan's bar_seconds division (spec v2 §5, §6).
+    ok = make_track(id="ok", bpm=120.0)
+    zero_bpm = make_track(id="zero", bpm=0.0)
+    negative_bpm = make_track(id="negative", bpm=-1.0)
+    pool = eligible_pool([ok, zero_bpm, negative_bpm])
+    assert [t.id for t in pool] == ["ok"]
+
+
 def test_wide_bpm_ratio_removes_tier_2_but_not_3_4_5(make_track):
     config = EdgeBuilderConfig()
     track_a = make_track(bpm=120.0)

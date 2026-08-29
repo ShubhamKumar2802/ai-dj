@@ -3,7 +3,11 @@ from processing.edge_builder.config import EdgeBuilderConfig
 
 
 def eligible_pool(tracks: list[Track]) -> list[Track]:
-    return [t for t in tracks if t.status != "excluded" and len(t.downbeat_times) >= 2]
+    # bpm > 0 guards junction_plan's bar_seconds division (§5, §6). Not a musical
+    # gate — a non-positive BPM means the tempo estimate failed outright.
+    return [
+        t for t in tracks if t.status != "excluded" and len(t.downbeat_times) >= 2 and t.bpm > 0
+    ]
 
 
 def tier2_eligible(track_a: Track, track_b: Track, config: EdgeBuilderConfig) -> bool:

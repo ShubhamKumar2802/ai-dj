@@ -83,6 +83,20 @@ junction : A[junction_start → blend_end] with B[B.cue_in → B.cue_in + L] ent
 B_body   : B.cue_in + L → B.cue_out
 ```
 
+**Bars to seconds to samples.** `ramp_bars` and `length_bars` are counts of *bars*,
+as are every `Envelope` breakpoint's `bar_offset`. `Junction.bar_seconds`
+(`edge_builder` spec v2 §6) is the conversion factor — track A's bar length, since
+the window is anchored on A's exit:
+
+```
+seconds  = n_bars * junction.bar_seconds
+samples  = round(seconds * SAMPLE_RATE)          # 48000, D25 — once, here
+```
+
+Nothing else on the `Junction` carries tempo, and `StrategyFn` (§4) receives no
+other input, so this field is the only thing that makes any `length_bars > 0` tier
+renderable at all (see `## Amendments`).
+
 **Tier 3 degenerates this to zero length.** With `ramp_bars = 0` and
 `length_bars = 0`: `junction_start = blend_start = blend_end = cue_out`. There is no
 blend region — `render_junction` for tier 3 is exactly:
@@ -241,6 +255,29 @@ tests/render/transition_renderer/
 ---
 
 ## Amendments
+
+- **2026-08-24** — **`Junction` gained `bar_seconds`** (`edge_builder` spec **v2**
+  §2/§6, which owns the contract). This module could not previously execute any tier
+  with `length_bars > 0`: §3's `blend_end = blend_start + length_bars` and every
+  `Envelope` breakpoint are counted in *bars*, but §4's
+  `StrategyFn = Callable[[Junction, StereoPCM, StereoPCM], StereoPCM]` receives only
+  the `Junction` and two PCM buffers — and nothing on the `Junction` said how long a
+  bar was. The gap was invisible because **tier 3, the only implemented tier, has
+  `length_bars = 0`** and degenerates to a splice (§3), so it is the one tier where
+  the conversion never happens. `bar_seconds` is track A's bar length (the window is
+  anchored on A's exit; tier 2 locks B to A via `rate_b`, so inside the window B's
+  bars are A's), and it is emitted on every tier including tier 3, where it goes
+  unused.
+
+  An amendment, not a v2, on this spec's own established test: **no code implements
+  this spec** (`overview.md` row 6: Spec Done, Code —; `src/render/` does not exist),
+  so nothing can fail to comply. Same justification as the 2026-08-21 entry below.
+  Surfaced while specifying `processing/path_search` — see that spec §16.
+  1. §3 — the segment-boundary math now has the tempo it needs; `length_bars` and
+     `ramp_bars` convert to seconds as `n * junction.bar_seconds`, then to samples at
+     the canonical rate (D25), preserving §3's "sample-exact boundaries" invariant.
+  2. §4 — `StrategyFn`'s signature is **unchanged**; the tempo arrives inside the
+     `Junction` it already receives, which is why no interface needed to move.
 
 - **2026-08-21** — `Junction` and `Envelope` moved out of this module's `schema.py`
   to `common/contracts/schema.py`, surfaced while drafting

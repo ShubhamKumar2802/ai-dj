@@ -51,6 +51,11 @@ def build_junction(
         strategy_tier=tier,
         ramp_bars=0,
         length_bars=length_bars,
+        # Track A's bar length, always: every tier anchors its window on A's exit,
+        # and tier 2 — the only tier that stretches — locks B to A, so inside the
+        # window B's bars are A's bars (§6). Well-defined because §5's pool filter
+        # drops bpm <= 0.
+        bar_seconds=60.0 / track_a.bpm * track_a.beats_per_bar,
         rate_a=1.0,
         rate_b=rate_b,
         gain_db_a=0.0,

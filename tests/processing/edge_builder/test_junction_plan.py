@@ -97,6 +97,54 @@ def test_tier_5_has_single_high_ramp(make_track, make_cue):
     assert envelope.breakpoints == [(0, 0.0), (8, 1.0)]
 
 
+def test_bar_seconds_from_known_tempo(make_track, make_cue):
+    config = EdgeBuilderConfig()
+    track_a = make_track(id="a", bpm=120.0, beats_per_bar=4)
+    track_b = make_track(id="b", bpm=120.0, beats_per_bar=4)
+    cue_out = make_cue(position=100.0, kind="hook_exit")
+    cue_in = make_cue(position=8.0, kind="intro_end")
+
+    junction = build_junction(track_a, track_b, cue_out, cue_in, 2, config)
+    # 120 BPM 4/4 -> one beat is 0.5s, one bar is 2.0s.
+    assert junction.bar_seconds == pytest.approx(2.0)
+
+
+def test_bar_seconds_uses_track_a_never_track_b(make_track, make_cue):
+    config = EdgeBuilderConfig()
+    track_a = make_track(id="a", bpm=120.0, beats_per_bar=4)
+    track_b = make_track(id="b", bpm=90.0, beats_per_bar=4)
+    cue_out = make_cue(position=100.0, kind="hook_exit")
+    cue_in = make_cue(position=8.0, kind="intro_end")
+
+    for tier in (2, 3, 4, 5):
+        junction = build_junction(track_a, track_b, cue_out, cue_in, tier, config)
+        assert junction.bar_seconds == pytest.approx(2.0)  # A's, not B's 2.666...
+
+
+def test_bar_seconds_emitted_on_every_tier_including_tier_3(make_track, make_cue):
+    config = EdgeBuilderConfig()
+    track_a = make_track(id="a", bpm=128.0, beats_per_bar=4)
+    track_b = make_track(id="b", bpm=128.0, beats_per_bar=4)
+    cue_out = make_cue(position=100.0, kind="hook_exit")
+    cue_in = make_cue(position=8.0, kind="intro_end")
+
+    expected = 60.0 / 128.0 * 4
+    for tier in (2, 3, 4, 5):
+        junction = build_junction(track_a, track_b, cue_out, cue_in, tier, config)
+        assert junction.bar_seconds == pytest.approx(expected)
+
+
+def test_bar_seconds_respects_beats_per_bar(make_track, make_cue):
+    config = EdgeBuilderConfig()
+    track_a = make_track(id="a", bpm=120.0, beats_per_bar=3)
+    track_b = make_track(id="b", bpm=120.0, beats_per_bar=4)
+    cue_out = make_cue(position=100.0, kind="hook_exit")
+    cue_in = make_cue(position=8.0, kind="intro_end")
+
+    junction = build_junction(track_a, track_b, cue_out, cue_in, 3, config)
+    assert junction.bar_seconds == pytest.approx(1.5)
+
+
 def test_gain_db_left_at_zero(make_track, make_cue):
     config = EdgeBuilderConfig()
     track_a = make_track(id="a")

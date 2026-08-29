@@ -1,29 +1,9 @@
 # Edge Builder — Spec
 
-**v2** — supersedes v1, see `archive/spec-v1.md`.
-
-**What changed in v2** (surfaced while specifying `processing/path_search`, the
-module that first makes multi-tier plans real — see that spec §16): `Junction`
-gains **`bar_seconds`**, and the pool filter gains a `bpm > 0` guard.
-
-`Junction` carried `length_bars` and `Envelope` breakpoints in `(bar_offset,
-value)` — but no tempo, and `render/transition_renderer`'s
-`StrategyFn = Callable[[Junction, StereoPCM, StereoPCM], StereoPCM]` (that spec
-§4) receives nothing else. So a renderer handed `length_bars = 8` had no way to
-convert it to samples. This was invisible because the only implemented tier is
-**tier 3, whose `length_bars = 0`** degenerates the segment math to a splice
-(that spec §3) — the one tier where the gap cannot fire. Every other tier needs
-it: tier 5's *"high-pass A up and out over 8 bars"* (§1.9), tier 4's 4-bar
-echo-out, tier 2's 16-bar swap. **This is not about time-stretch** — tiers 4 and
-5 never stretch (`rate_b = 1.0`) and still need a bar length.
-
-Confined to §2 (the field), §5 (the guard), §6 (the formula) and §9 (its test).
-No cost term, weight, tier rule, or entry-point signature changed.
-
 **Layer:** `processing/` — first module in this layer, upstream of `path_search`.
 **Depends on:** `resources/documentation/ingestion/orchestrator/spec.md`'s `Track`
-contract; the shared `Junction`/`Envelope` contract (§2, owned by this spec, living
-in `common/contracts/`).
+contract; the shared `Junction`/`Envelope` contract (§2, moved to
+`common/contracts/` by this spec).
 
 ---
 
@@ -55,11 +35,10 @@ winning `Junction` plan alongside its scalar cost, so that when `path_search` la
 selects A→B the junction plan comes along free (**D4**: *"store the argmin, not just
 the min"*).
 
-**Consumer:** `processing/path_search`
-(`resources/documentation/processing/path_search/spec.md`, specced as of v2). It needs
-O(1) lookup of the cost for any ordered pair, and a `cost` that is a **single scalar**,
-since its own objective sums them (`D3`: `total = Σ edge_costs + λ·arc_deviation +
-μ·diversity_penalty + ν·familiarity_score`).
+**Consumer:** `processing/path_search` (not yet specced). It needs O(1) lookup of the
+cost for any ordered pair, and a `cost` that is a **single scalar**, since its own
+objective sums them (`D3`: `total = Σ edge_costs + λ·arc_deviation + μ·diversity_penalty
++ ν·familiarity_score`).
 
 **Explicitly out of scope:**
 
@@ -129,7 +108,7 @@ location leaves neither layer depending on the other. `StereoPCM` stays in
 `render/transition_renderer/schema.py` — it is audio-only and never crosses into
 planning.
 
-The contract, with `bar_seconds` new in v2 and every other field unchanged from v1:
+The moved contract is unchanged, field for field:
 
 ```
 Junction:
@@ -140,15 +119,11 @@ Junction:
   strategy_tier           : int            # 2 | 3 | 4 | 5 — an int, never a name (§6)
   ramp_bars                 : int            # 0 in v1 (D18/D19)
   length_bars                 : int            # §6
-  bar_seconds                   : float          # NEW in v2 — seconds per bar of
-                                                  # track A, the unit `length_bars`
-                                                  # and every `Envelope.bar_offset`
-                                                  # are counted in (§6)
-  rate_a                          : float          # 1.0 always in v1 (§6)
-  rate_b                            : float          # tier 2 only (D19)
-  gain_db_a                           : float          # 0.0 here — playlist_renderer owns
-  gain_db_b                             : float          # 0.0 here
-  envelopes                               : list[Envelope]   # §6
+  rate_a                        : float          # 1.0 always in v1 (§6)
+  rate_b                          : float          # tier 2 only (D19)
+  gain_db_a                         : float          # 0.0 here — playlist_renderer owns
+  gain_db_b                           : float          # 0.0 here
+  envelopes                             : list[Envelope]   # §6
 
 Envelope:
   target       : "low" | "mid" | "high" | "crossfader"
@@ -156,18 +131,9 @@ Envelope:
   breakpoints      : list[tuple[float, float]]   # (bar_offset, value)
 ```
 
-**`bar_seconds` is required, with no default.** A missing bar length must fail at
-construction rather than silently defaulting to something that renders a
-wrong-length blend — which is precisely why adding it is a version bump rather than
-an amendment (README's decision table: code implementing v1 no longer complies).
-
-**`MixPlan`/`TrackRef` join `Junction` in `common/contracts/`** — v1 §12 Q6 deferred
-this *"until that module exists"*, and `processing/path_search` now has a spec
-(`resources/documentation/processing/path_search/spec.md` §2), so it is settled the
-same way `Junction` was: they are produced by `processing/` and consumed by
-`render/`, so a neutral home leaves neither layer depending on the other. That spec
-owns their field lists; this one only needs to know they are no longer in
-`render/playlist_renderer/`.
+`MixPlan`/`TrackRef` stay in `playlist_renderer`'s spec for now — they are produced by
+`path_search`, which doesn't exist yet, so moving them would restructure a spec for a
+module nobody has written (§12 Q6).
 
 ---
 
@@ -247,7 +213,7 @@ fallback, leaving D27's stated preference order unused; and D10 explicitly names
 | `energy` | `|energy_curve_a[out_bar] − energy_curve_b[in_bar]|` over `energy_full_cost_delta`, clamped to 1. **Absolute, not signed** — deliberate shaping of rise and fall is the path-level arc (§1.10), so an edge must not prefer "louder next" on its own | D3, D23 |
 | `vocal` | **D22 verbatim**: `vocal_mask_a[out_bar] + vocal_mask_b[in_bar]`, each side first normalised against that track's own 95th-percentile `vocal_mask` (the raw signal is unbounded band energy), then halved to land in `[0,1]` | **D22** |
 | `cue_kind` | mean of the two sides' preference costs (below) | D27, D12 |
-| `phrase` | `1 − clamp(strength, 0, 1)` of the nearest `PhraseBoundary` within `phrase_tolerance_s` of the cue, per side, averaged; `1.0` when no boundary is near (the clamp is v1's final amendment — `archive/spec-v1.md`) | D8, D10 |
+| `phrase` | `1 − clamp(strength, 0, 1)` of the nearest `PhraseBoundary` within `phrase_tolerance_s` of the cue, per side, averaged; `1.0` when no boundary is near (see `## Amendments` — the clamp) | D8, D10 |
 | `tier_penalty` | §5's template-conditioned table | **D5**, §1.9 |
 
 **Cue-kind preference costs** map **D27**'s preference *order* onto the real `CueKind`
@@ -285,7 +251,7 @@ decided (D7).
 
 `key_confidence` is `None` exactly when `key` is (both nullable together, per
 `ingestion/orchestrator`'s `Track` contract) — treated as `0.0` in the `min()` above
-(v1 `## Amendments`). This collapses to the same neutral `0.5` either way `key_cost`
+(see `## Amendments`). This collapses to the same neutral `0.5` either way `key_cost`
 would already produce from a null key via §3's `key_distance`, so it is a
 formalisation of the formula's only sane reading, not a new behaviour.
 
@@ -306,19 +272,12 @@ for a given pair:
 ```
 pool:      drop every track with status == "excluded"          # D7, D10
            drop every track with fewer than 2 downbeat_times   # §3 — no bars, no curve
-           drop every track with bpm <= 0                      # v2 — §6's bar_seconds
 edges:     no self-edges (A -> A)
 
 tier 2 is ineligible for a pair when:
   |bpm_a - bpm_b| / bpm_a > tier2_max_bpm_ratio    # D19, default 0.03
   or  A.status == "cut_only"  or  B.status == "cut_only"       # below
 ```
-
-The `bpm <= 0` drop is new in v2 and exists solely so §6's `bar_seconds` cannot
-divide by zero. It is not a new *musical* gate (D10 permits none): a non-positive
-BPM means the tempo estimate failed outright, which is the same "analysis is
-known-broken" category D7's `excluded` covers, and in practice such a track has
-already failed the `< 2 downbeat_times` rule above.
 
 **D19's ±3% is a gate on a tier, not on an edge** — the pairing survives at tiers 3/4/5
 (*"the planner falls to tier 3 (cut, no lock needed) or tier 5"*). Tier 3 has no tempo
@@ -374,30 +333,7 @@ gain_db_a / gain_db_b           = 0.0                                # §1 — n
 rate_a                            = 1.0                                # always (below)
 rate_b                              = bpm_a / bpm_b  for tier 2, else 1.0
 length_bars                           = 0 (t3) | 16 (t2) | 4 (t4) | 8 (t5)
-bar_seconds                             = 60.0 / A.bpm * A.beats_per_bar   # v2, below
 ```
-
-**`bar_seconds` — track A's bar length, always** (new in v2). It is the unit that
-`length_bars` and every `Envelope.bar_offset` are counted in, and without it
-`transition_renderer` cannot convert either into samples (that spec §3's
-`blend_end = blend_start + length_bars`, §4's `StrategyFn`, which receives only the
-`Junction` and two `StereoPCM` buffers).
-
-A's tempo rather than B's, for two independent reasons that happen to agree:
-
-1. **Every tier anchors its window on A's exit** — the blend starts at A's
-   `cue_out` and runs forward, so the window is measured in A's bars whatever B is
-   doing. §1.9's bass-swap procedure is written the same way ("at 8 bars… of a
-   16-bar phrase" — A's phrase).
-2. **Tier 2, the only tier that stretches, locks B to A.** `rate_b = bpm_a / bpm_b`
-   means that inside the window B's bars *are* A's bars, so there is no second bar
-   length to disagree about. Tiers 3/4/5 leave `rate_b = 1.0` and never overlay the
-   two tracks bar-for-bar at all.
-
-Emitted for every tier including tier 3, where `length_bars = 0` makes it unused —
-a uniform contract beats a conditionally-meaningful field, and it costs one float.
-Well-defined because §5's pool filter drops `bpm <= 0`, and `beats_per_bar` is
-carried on `Track` (`ingestion/orchestrator` spec §2).
 
 `rate_a` is **always** `1.0`: **D19** stretches *the incoming track* for its entire
 appearance, so only side B carries a rate. `rate_b` is a single constant ratio — v1
@@ -425,7 +361,7 @@ Read as: B's lows killed until bar 8 then ramped to unity over 4 bars; A's lows 
 unity until bar 8 then ramped to kill; crossfader travelling A→B across bars 0–12.
 Tiers 3 and 4 emit `envelopes=[]`; tier 5 emits a single `high`/`a` ramp over its 8
 bars — `Envelope(target="high", side="a", breakpoints=[(0, 0.0), (length_bars_tier5,
-1.0)])` (made explicit in v1's `## Amendments`; v1 originally gave the bar count but not the
+1.0)])` (see `## Amendments`; this spec previously gave the bar count but not the
 literal breakpoints). Tier 4's echo-out **cannot** be expressed in the current
 `Envelope` contract at
 all — `target` has no delay member — so its delay stays the renderer's internal
@@ -521,14 +457,11 @@ reproducibility record, and is already what design-v3 §5.2's `MixPlan.config` c
   penalty averaging across mismatched templates.
 - `test_junction_plan.py`: `rate_a == 1.0` always and `rate_b` only for tier 2;
   `ramp_bars == 0`; per-tier `length_bars`; the tier-2 envelope breakpoints matching
-  §6 exactly; `gain_db_*` left at `0.0`; **`bar_seconds` (v2)** — computed from A's
-  tempo and never B's (assert with a pair whose BPMs differ), emitted on every tier
-  including tier 3, and matching `60/bpm * beats_per_bar` on a known pair
-  (120 BPM 4/4 → `2.0`).
+  §6 exactly; `gain_db_*` left at `0.0`.
 - `test_build.py`: the argmin actually being the minimum over a small hand-enumerable
   grid; the stored `plan` corresponding to the winning combination (D4's "store the
   argmin"); `cost` matching §4's weighted formula applied to the stored `terms` (see
-  v1 `## Amendments` — not a literal unweighted `sum(terms)`, which would contradict
+  `## Amendments` — not a literal unweighted `sum(terms)`, which would contradict
   §2's `[0,1]` claim); pairs with no viable junction **absent from** `edges` rather
   than present with a sentinel; no self-edges.
 - `schema.py`/`config.py` have no dedicated test files — plain data classes, no
@@ -561,7 +494,7 @@ src/processing/edge_builder/
     example_build_edges_from_music.py     # end-to-end: real ingest_tracks() over
                                            # music/*.mp3 -> real Track[] -> build_edges();
                                            # also gitignored, not part of the suite
-                                           # (added in v1's ## Amendments)
+                                           # (see ## Amendments)
 
 tests/processing/edge_builder/
   conftest.py               # synthetic Track builders — reuse orchestrator's and
@@ -575,7 +508,7 @@ tests/processing/edge_builder/
 ```
 
 `src/processing/edge_builder/examples/` needs a `.gitignore` entry at implementation
-time, alongside the sibling `examples/` lines already there (v1 `## Amendments` —
+time, alongside the sibling `examples/` lines already there (see `## Amendments` —
 the count of pre-existing sibling lines was slightly off).
 
 ---
@@ -605,26 +538,81 @@ the count of pre-existing sibling lines was slightly off).
 | Q3 | Every weight and tier penalty in §8 is an untuned starting point — **D26** says they cannot be tuned until the eval harness (§9 of design-v3) exists | Output quality, entirely. Nothing structural — the shape is right, the numbers are guesses |
 | Q4 | Half/double-time folding (§4) is this spec's invention; design-v3 never mentions whether 90↔180 BPM pairs should be treated as close | Whether `allow_half_double_time` should default on; trivially reversible via config |
 | Q5 | `Envelope.side` is meaningless for `crossfader`, which is a single control, not a per-side one (§6 sets it to `"a"` by convention) | Cosmetic today; worth settling before Milestone B interprets it |
-| ~~Q6~~ | **Answered in v2.** `MixPlan`/`TrackRef` do join `Junction` in `common/contracts/` — `processing/path_search` now has a spec, which owns their field lists (§2) | — |
+| Q6 | Should `MixPlan`/`TrackRef` join `Junction` in `common/contracts/` when `path_search` is specced (§2)? | Where `path_search`'s output contract lives — deferred deliberately until that module exists |
 | Q7 | `length_bars_tier2 = 16` against **F8**'s warning that 16 does not divide 12-bar phrasing, so a swap starting on a boundary ends 4 bars into the next phrase | Tier-2 musicality on a 12-bar-phrased library; design-v3 Q9 already tracks the same question for the library as a whole |
 | Q8 | Once the eval harness exists, is it worth fitting the seven `w_*` weights and the tier-penalty tables from collected **pairwise** preferences — a regularised ranking fit that keeps the formula and learns only its constants, with §8's hand-tuned defaults as the prior — rather than continuing to hand-tune? | Nothing today: both hand-tuning and fitting are gated on the same harness. Recorded because it is the most likely direction this module evolves, and because it stays D14-compatible (`junction_cost = Σ wᵢ·termᵢ` is unchanged; determinism, millisecond re-runs, JSON-fixture tests and per-term explainability all survive). §2's `CostTerms` is the feature vector it would need, and D26's `[0,1]` normalisation is what would make regularising toward the prior meaningful |
-| Q10 | **Tier 2 is effectively unreachable on the real library.** Measured across the full 69-track corpus (v2 amendment below): 52 tracks `cut_only`, 10 `ok`, 7 `excluded` → a 62-track pool, 3,782 ordered pairs. Tier 2 was **eligible on 12 pairs (0.3%)** and **won 0 of 3,477 edges**; tier 3 won every single one. Two independent causes stack: (a) §5's `cut_only` rule removes tier 2 whenever *either* side is quarantined, and D7 quarantines **75%** of this library; (b) even on the 12 eligible pairs, `tier_penalties_film` prices tier 2 at `0.10` against tier 3's `0.0`, so tier 2 loses on cost even when it is legal. Cause (b) is §1.9 working exactly as designed (*"for film masters, tiers 3–4 are the correct professional technique, not a degradation"*) — cause (a) may not be | Whether the tier ladder buys anything on *this* library, and therefore whether D5's *"% at tier 2"* health metric can ever be non-zero here. Not a defect: the reference format is a hook-cut megamix and §1.9 calls tier 3 *"the workhorse… the megamix idiom anyway."* But it means the 75% `cut_only` rate is the lever worth investigating (design-v3 §9's *"how often D7 fires, and on what"*), not the tier table |
 | Q9 | `phrase`'s `clamp(strength, 0, 1)` (§4, added by the prior amendment fixing D26's invariant) empirically **saturates on 100% of real tracks** — measured across a real 69-track corpus, 0 had an empty `phrase_grid`, and every detected boundary's raw strength was ≥ ~1.0 (observed range ~1.06–30+), never inside `[0,1]` naturally. The clamp is correctness-safe but collapses `phrase_grid.py`'s graduated novelty signal into a near-binary "was any boundary within `phrase_tolerance_s`" indicator on real data — should `strength` instead be normalised per-track (mirroring D22's `vocal_mask` 95th-percentile pattern, already precedented in this same file's `normalized_vocal_mask`) before the `1 −` subtraction, to preserve relative boundary strength within a track instead of flattening it? | `phrase`'s usefulness as a differentiating signal on real (especially heavily-quarantined/`cut_only`) material — not a correctness bug (D26's `[0,1]` invariant already holds), but the term currently contributes far less real information than §4 designed it to |
 
 ---
 
 ## Amendments
 
-- **2026-08-24** — **Real-corpus tier diagnostic recorded as §12 Q10.** Ran the v2
-  code over the full 69-track `music/` corpus while verifying `bar_seconds` (§6),
-  the same real-corpus path that surfaced both `phrase`-term findings v1's
-  amendments record. Found **tier 2 eligible on 12 of 3,782 ordered pairs (0.3%) and
-  winning 0 of 3,477 edges** — tier 3 won every edge. Traced to two stacking causes:
-  §5's `cut_only` rule removing tier 2 whenever either side is quarantined (D7
-  quarantines 52 of 69 tracks here, 75%), and `tier_penalties_film` pricing tier 2
-  above tier 3 even on the pairs where it is legal. **No behaviour changed and no
-  defect found** — the second cause is §1.9 working as specified. Recorded because
-  D5's *"% at tier 2 is the best single health metric"* reads `0%` on this library,
-  which is worth knowing before that metric is used to judge anything.
-  `bar_seconds` itself verified sane across the same run: 1.541–2.712 s/bar
-  (≈88–156 BPM), no non-positive or non-finite values.
+- **2026-08-23** — Implementation completion pass: `common/contracts/` and
+  `processing/edge_builder/` (plus their tests) were written against this spec for
+  the first time. Every change below is additive/clarifying (README's amendment
+  column — rationale, internal detail) — no schema field, function signature, file
+  path, or invariant this document already committed to changed.
+  1. **`cost` vs. `CostTerms` weighting (§4, §9)** clarified: §9 described the
+     `test_build.py` invariant as "`cost` equalling the sum of its `terms`," which
+     read as a literal unweighted `sum(terms)`. That reading contradicts §2's "every
+     field already normalised to `[0,1]`" the moment any weight exceeds `1.0`
+     (`w_vocal` defaults to `1.2`). §4's `junction_cost` formula was always the
+     correct one — `CostTerms` stores each term's raw `[0,1]` value, and `cost` is
+     that formula applied to them. §9 now says so explicitly.
+  2. **Null `key_confidence` in the confidence blend (§4)** made explicit:
+     `key_confidence` is `None` exactly when `key` is (both nullable together, per
+     `ingestion/orchestrator`'s `Track` contract); it is treated as `0.0` in the
+     `min()` feeding `confidence_blend`. This collapses to the same neutral `0.5`
+     `key_cost` already produces from a null key via §3, so it changes nothing
+     observable — it just states the formula's only sane reading for a case §4
+     previously left implicit.
+  3. **Tier-5 envelope breakpoints (§6)** made explicit: `Envelope(target="high",
+     side="a", breakpoints=[(0, 0.0), (length_bars_tier5, 1.0)])`. §6 previously gave
+     the bar count (`8`) via §1.9's prose but not literal breakpoints, unlike tier
+     2's worked example.
+  4. **§10's `.gitignore` note** corrected: it claimed "three sibling `examples/`
+     lines already there," but the file has four (three from `ingestion/*` plus one
+     from `common/llm_service/`, a different layer) — a factual slip about existing
+     repo state, not a behavior change.
+- **2026-08-23** — **`examples/example_build_edges_from_music.py` added (§10)**: a
+  second manual smoke script, sibling to `example_build_edges.py`, that chains the
+  real `ingestion` pipeline (`ingest_tracks` over `music/*.mp3`) directly into
+  `build_edges()` — real `Track` objects, no JSON round-trip, no synthetic fixtures.
+  Purely additive to §10's file layout; no schema, signature, or invariant changed.
+  While fixing the pre-existing inaccuracy this surfaced (§10's listing for
+  `example_build_edges.py` had always claimed it ran "over a real ingested pool,"
+  which was never true — it uses a hand-built synthetic pool; that description now
+  correctly belongs to this new script instead).
+- **2026-08-23** — **`phrase` term formula corrected (§4)**: found by running
+  `build_edges` over real ingested tracks for the first time
+  (`examples/example_build_edges_from_music.py`), not by the synthetic-fixture test
+  suite. `PhraseBoundary.strength` (`ingestion/cue_derivation/phrase_grid.py`) is a
+  raw Foote-checkerboard novelty score — unbounded in practice (observed as high as
+  ~8.6 on a real track) and occasionally negative, never a `[0,1]` confidence. §4's
+  original `1 − strength` formula silently assumed the latter, so `phrase` (and
+  therefore `cost`) came out arbitrarily outside `[0,1]`/negative on real data,
+  violating D26. Fixed by clamping: `1 − clamp(strength, 0, 1)`. This is a
+  behavior-visible bug fix restoring an invariant (D26) this spec already committed
+  to, not a new one — same amendment-vs-version standing as any other internal
+  correction (README's amendment column: "an added clarification" covers a fix that
+  restores an already-stated invariant without touching a schema field, signature,
+  or file path). `test_cost.py` gained two adversarial cases (`strength` `> 1` and
+  `< 0`) covering this directly.
+- **2026-08-23** — **Follow-on diagnostic finding, not yet fixed (§4, new `## 12`
+  Q9):** ran `build_edges` over a real, larger corpus (88 tracks ingested via
+  `examples/example_build_edges_from_music.py` against a full downloaded
+  playlist) specifically to sanity-check the `phrase` term after the clamp fix
+  above. Found `phrase` landing on almost exactly two values across 5,390 real
+  edges (98% at `0.5`, the rest at `0.0`) — traced this to every one of a 69-track
+  sub-sample having a non-empty `phrase_grid` (0 empty), but every detected
+  boundary's raw `strength` sitting well above `1.0` (observed ~1.06–30+, never
+  naturally inside `[0,1]`). The clamp added above is therefore saturating on
+  effectively 100% of real boundaries — correctness-safe (D26's invariant holds,
+  no negative/out-of-range costs), but it turns `phrase` into a near-binary
+  "boundary within tolerance or not" signal in practice, discarding the graduated
+  novelty strength `phrase_grid.py` actually computes. **Recorded as open question
+  Q9, not fixed yet** — the candidate fix (per-track normalisation of `strength`
+  before the `1 −` subtraction, mirroring `normalized_vocal_mask`'s D22-precedented
+  95th-percentile pattern) is a real design decision on where the normalisation
+  boundary sits, not a one-line change, so it's deliberately left for a follow-up
+  pass rather than bundled into this diagnostic note.
