@@ -42,24 +42,35 @@ loop here.
 
 ## 2. Data contracts (`schema.py`)
 
-```
-MixPlan:                      # trimmed §5.2 shape for Milestone A
-  tracks    : list[TrackRef]
-  junctions : list[Junction]  # imported from common/contracts/schema.py — not
-                               # redefined here; one contract, one owner (see
-                               # processing/edge_builder spec §2, and ## Amendments)
+**`MixPlan`, `TrackRef` and `MixPlanConfig` are imported from
+`common/contracts/schema.py`**, not defined here — `schema.py` re-exports them so this
+module's public surface is unchanged. Their field lists live in
+`resources/documentation/processing/path_search/spec.md` §2, which is now their single
+owner: `path_search` is the module that actually *produces* a `MixPlan`.
 
-TrackRef:
-  id       : str
-  path     : str
-  cue_in   : float | None     # this track's own opening point — used only when it
-                               # has no preceding junction (D24's free first-track
-                               # cue-in). None means "from 0.0".
-  cue_out  : float | None     # this track's own closing point — used only when it
-                               # has no following junction (D24: last track plays to
-                               # its natural end, no time-boxing). None means "to the
-                               # end of the file".
-```
+They were originally defined here, back when nothing produced one and a hand-typed
+fixture was the only source. That ownership predates `processing/path_search`; leaving
+the contract in `render/` would make the planning layer depend on the render layer,
+and moving it into `processing/` would only invert the same problem — the identical
+reasoning that moved `Junction`/`Envelope` to `common/contracts/` (see
+`## Amendments`, and `processing/edge_builder` spec §2). `StereoPCM` stays in
+`render/transition_renderer/schema.py` — audio-only, never crosses into planning.
+
+Two fields are new since the Milestone-A shape this spec originally carried, both set
+by `path_search` and both consumed here rather than by `transition_renderer`:
+
+- **`TrackRef.fade_out_bars : int | None`** — D24's closer fallback. When the last
+  track has no `outro_start` cue (which is always, in v1), `path_search` sets a
+  time-boxed `cue_out` **and** `fade_out_bars = 4`, meaning *"apply a 4-bar
+  equal-power fade to silence"* rather than stopping dead. `None` everywhere else.
+  Honoured in Milestone B (§9 Q3).
+- **`TrackRef.lufs_integrated : float`** — carried through from `Track` so that this
+  module can compute set-wide gain. It closes a real gap: `edge_builder` §1 leaves
+  `gain_db_a/b` at `0.0` calling gain *"`playlist_renderer`'s concern"*, and
+  `transition_renderer` §3 declines it because *"that needs LUFS data this module
+  never receives"* — but `render_mix(mix_plan, load_audio)` receives no `Track[]`
+  either, so the job had an owner with no access to its input. Milestone B's
+  mastering step reads this field.
 
 Milestone A's fixture always has exactly `tracks = [A, B]`, `junctions = [one
 Junction]`, with `A.cue_out` and `B.cue_in` left unset (both are supplied by the
@@ -157,8 +168,10 @@ converted or downmixed on the way out. No mastering/loudness step in Milestone A
 ```
 src/render/playlist_renderer/
   __init__.py             # public exports: MixPlan, TrackRef, render_mix, write_wav
-  schema.py                 # MixPlan, TrackRef (§2) — imports Junction from
-                             # transition_renderer.schema
+  schema.py                 # re-exports MixPlan, TrackRef, MixPlanConfig and
+                             # Junction from common/contracts/schema.py — none of
+                             # them defined here (§2, ## Amendments). Keeps this
+                             # module's public surface unchanged
   render.py                   # render_mix() (§3)
   writer.py                     # write_wav() (§4)
 
@@ -187,10 +200,33 @@ tests/render/playlist_renderer/
 |---|---|---|
 | Q1 | **Shared with `transition_renderer`'s open questions.** Milestone A's `render_junction` contract (produces A's full body + B to its natural end) only works because there's exactly one junction. Once Milestone B needs N>2 tracks, does the D17 three-way `A_body`/`junction`/`B_body` split get implemented here (this module slices each track's body, `transition_renderer` only ever renders the blend window), or does `transition_renderer` grow a "max duration for B" parameter instead? | `render_mix()`'s design once multi-junction `MixPlan`s exist (Milestone B, after `edge_builder`/`path_search`) |
 | Q2 | Where does `load_audio` actually live — a shared utility both `feature_extractor` and this module import, or does this module get its own thin wrapper around the same canonical loader? | Avoiding two independent implementations of "decode to 48kHz float32 stereo" (D25) drifting apart |
+| Q3 | `TrackRef.fade_out_bars` (§2, set by `path_search` per D24) has **no Milestone A implementation** — `render_mix` currently returns `transition_renderer`'s output unchanged, which plays B to its natural end with no fade. In v1 `cue_derivation` never emits an `outro_start` cue, so the fallback fires on **every** mix, meaning every closer currently ends on a hard stop | The last few seconds of every rendered mix. Trivial once Milestone B's multi-junction assembly exists — an equal-power ramp over `fade_out_bars * junction.bar_seconds` — but it has nowhere to live until this module slices track bodies itself |
 
 ---
 
 ## Amendments
+
+- **2026-08-24** — **`MixPlan`/`TrackRef` ownership moved to
+  `common/contracts/schema.py`**, and both gained fields. Surfaced while drafting
+  `resources/documentation/processing/path_search/spec.md` — the first module that
+  actually *produces* a `MixPlan`, and the module the 2026-08-21 entry below said this
+  question was deferred until (`processing/edge_builder` spec v1 §12 Q6, now answered
+  in that spec's v2).
+
+  An amendment rather than a v2, on the same test the entry below applies: the
+  README's decision table asks *"does code already implementing the old spec still
+  comply?"*, and **no code implements this spec** (`overview.md` row 7: Spec Done,
+  Code —; `src/render/` does not exist), so nothing can fail to comply. Should this
+  module get built before the move lands, re-evaluate as a version bump.
+  1. §2 — `MixPlan`/`TrackRef` field blocks replaced by an import note pointing at
+     `processing/path_search` spec §2 as their single owner.
+  2. §2 — `TrackRef` gains **`fade_out_bars`** (D24's 4-bar fade to silence on a
+     closer with no `outro_start` cue) and **`lufs_integrated`** (so this module's
+     Milestone B mastering step can reach the LUFS data it was assigned but had no
+     path to — `render_mix` never receives `Track[]`).
+  3. §2 — `MixPlan` gains **`config : MixPlanConfig`**, restoring design-v3 §5.2's
+     config block that Milestone A's trimmed shape had dropped.
+  4. §9 — new Q3 recording that `fade_out_bars` has no Milestone A implementation.
 
 - **2026-08-21** — `Junction`'s owning module changed from
   `render/transition_renderer/schema.py` to `common/contracts/schema.py`, surfaced
