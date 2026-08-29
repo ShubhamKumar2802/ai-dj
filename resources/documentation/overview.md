@@ -7,19 +7,20 @@ Two things live here: a **working order** (what to do next, and why that order) 
 the module specs before trusting the status columns. Update this file as each spec or
 implementation lands — that is the point of it.
 
-Last checked: 2026-08-24.
+Last checked: 2026-08-29.
 
 ---
 
 ## Working order
 
-Where things stand: **the analysis layer is built and working, the planning layer is
-fully specced with one module unimplemented, and the render layer has no code at all**
-(`src/render/` does not exist). So nothing produced so far can be listened to yet.
+Where things stand: **the analysis and planning layers are built and working
+end-to-end (`audio → Track[] → ScoredEdges → MixPlan`), and the render layer has no
+code at all** (`src/render/` does not exist). So nothing produced so far can be
+listened to yet.
 
-The critical path to a mix you can actually hear is **W1 → W2 → W3**.
+The critical path to a mix you can actually hear is now **W2 → W3**.
 
-### W1 — Implement `processing/path_search` · build step 5
+### W1 — Implement `processing/path_search` · build step 5 — ✅ DONE 2026-08-29
 
 | | |
 |---|---|
@@ -27,11 +28,14 @@ The critical path to a mix you can actually hear is **W1 → W2 → W3**.
 | **Unblocks** | real `MixPlan`s instead of hand-typed fixtures; W3 |
 | **Done when** | `examples/example_search_path_from_music.py` prints a 15-track ordering with its five objective terms, `tier_histogram` and `estimated_duration_s` |
 
-Completes the planning layer end-to-end (`audio → Track[] → ScoredEdges → MixPlan`).
-The spec pins every file, signature and test — `processing/path_search/spec.md` §12–13.
-Watch the four items its §12 calls out as silent-failure tests (feasibility, objective
-scale, beam length uniformity, `K_eff` clamping); each exists because the bug it
-catches would otherwise ship looking like success.
+Done: all 14 module files + 10 test files (72 tests, incl. the four silent-failure
+tests), `MixPlan`/`TrackRef`/`MixPlanConfig` added to `common/contracts/schema.py`,
+both example scripts. `example_search_path.py` (synthetic, no audio) and
+`example_search_path_from_music.py` (32-track real corpus) both print a 15-track
+ordering with all five objective terms, `tier_histogram` and `estimated_duration_s`.
+Implementation matched the spec with no amendment needed. Real-corpus runs land at
+~29 min for 15 tracks (D21 "signal, not constraint") and often `pool_exhausted`
+below 20 input tracks — both downstream of T1's over-quarantine, not path_search.
 
 ### W2 — Render Milestone A · build step 0, the walking skeleton
 
@@ -51,7 +55,7 @@ no EQ, no envelopes, no time-stretch.
 
 | | |
 |---|---|
-| **Blocked by** | W1 (real plans) + W2; and a design decision — `playlist_renderer` §9 **Q1**: does this module slice each track's body, or does `transition_renderer` grow a "max duration for B" parameter? |
+| **Blocked by** | W2; and a design decision — `playlist_renderer` §9 **Q1**: does this module slice each track's body, or does `transition_renderer` grow a "max duration for B" parameter? (W1 is done — real `MixPlan`s are available now) |
 | **Unblocks** | **the first full mix you can hear.** Also `fade_out_bars` (Q3), set-wide LUFS gain, and W6's tuning |
 | **Done when** | a 15-track `MixPlan` renders to one continuous WAV |
 
@@ -121,7 +125,7 @@ with no implementation.
 | 3 | `ingestion/cue_derivation` | D8/D9/D22/D27 | Done | Done |
 | — | `ingestion/orchestrator` — glue for §4's `RawFeatures → Track[]` arrow; no step number, sits between #3 and #4 | §4 | Done | Done |
 | 4 | `processing/edge_builder` — **spec v2** (`Junction.bar_seconds`; v1 in `archive/spec-v1.md`) | D4/D5/D19 | Done | Done |
-| 5 | `processing/path_search` — owns `MixPlan`/`TrackRef`/`MixPlanConfig` in `common/contracts/` | D3/D21 | Done | **— (W1)** |
+| 5 | `processing/path_search` — owns `MixPlan`/`TrackRef`/`MixPlanConfig` in `common/contracts/` | D3/D21 | Done | Done |
 | 6 | `render/transition_renderer` — Milestone A **specced**, Milestone B (tiers 2/4/5, LUFS, tempo lock) documented | D17 | Done | **— (W2/W5)** |
 | 7 | `render/playlist_renderer` — Milestone A **specced**, Milestone B (multi-junction, MP3, CUE sheet) documented | D17 | Done | **— (W2/W3)** |
 | 8 | `ingestion/familiarity_scorer` — calls `llm_service`, writes `Track.familiarity_score`/`.era`/`.is_club_edit` | §6.1 | — | **— (W7)** |
@@ -132,7 +136,7 @@ Cross-cutting, built ahead of the build order, no step number.
 
 | Module | Spec | Code |
 |---|---|---|
-| `common/contracts` — `Junction`, `Envelope`, and (per `path_search` §2) `MixPlan`, `TrackRef`, `MixPlanConfig` | Owned by producing modules | Partial — `MixPlan` lands with W1 |
+| `common/contracts` — `Junction`, `Envelope`, `MixPlan`, `TrackRef`, `MixPlanConfig` | Owned by producing modules | Done |
 | `common/llm_service` | Done | Done |
 | `common/logging` | Done | Done |
 

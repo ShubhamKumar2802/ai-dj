@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass
@@ -33,3 +33,50 @@ class Junction:
     gain_db_b: float
 
     envelopes: list[Envelope]
+
+
+@dataclass
+class TrackRef:
+    id: str
+    path: str
+
+    # This track's own opening point. Consulted ONLY when it has no preceding
+    # junction — i.e. the opener (D24's free cue-in). None = from 0.0.
+    cue_in: float | None
+    # This track's own closing point. Consulted ONLY when it has no following
+    # junction — i.e. the closer (D24). None = to the natural end.
+    cue_out: float | None
+    # D24's fallback: `closer_fade_bars` on the last track when it has no
+    # `outro_start` cue, so the renderer fades to silence instead of stopping
+    # dead. None = no fade. Always None on every non-closer TrackRef.
+    fade_out_bars: int | None
+
+    # Carried through from Track. path_search never reads it — it exists so the
+    # renderer (which receives only the MixPlan, never Track[]) can compute
+    # set-wide LUFS gain (path_search spec §2).
+    lufs_integrated: float
+
+
+@dataclass
+class MixPlanConfig:
+    # K as requested (PathSearchConfig.target_track_count). The ACHIEVED count is
+    # len(MixPlan.tracks), which may be smaller (D21).
+    track_count: int
+    energy_arc: str
+    seed_track: str | None
+
+    # dataclasses.asdict(PathSearchConfig) — design-v3 §5.2's "weights".
+    path_search: dict[str, Any]
+    # dataclasses.asdict(EdgeBuilderConfig) when the caller passes `edge_config`;
+    # design-v3 §5.2's "tier_penalties". None otherwise (path_search spec Q10).
+    edge_builder: dict[str, Any] | None
+
+
+@dataclass
+class MixPlan:
+    config: MixPlanConfig
+    # In play order; tracks[0] opens, tracks[-1] closes.
+    tracks: list[TrackRef]
+    # len == len(tracks) - 1. junctions[i] joins tracks[i] -> tracks[i+1], copied
+    # verbatim from ScoredEdge.plan (D4 — stored, never recomputed).
+    junctions: list[Junction]
