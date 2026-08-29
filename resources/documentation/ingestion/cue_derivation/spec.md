@@ -373,7 +373,7 @@ it *doesn't* need one; rerun on every config/threshold change.
 | # | Question | Blocks |
 |---|---|---|
 | Q1 | `free_intro_end`'s formula (§3) is a v1 simplifying decision (equals `grid_start` unless a riser precedes it) — is this actually what design-v3's separate naming of the two fields intended? | Correctness of §3, low blast radius (one field) |
-| Q2 | `exclude_threshold`/`cut_only_threshold` (§8, §9) have no principled default yet — design-v3 §6.5 itself calls the equivalent judgment "currently a hand-tuned heuristic threshold" pending the (v2) grid-confidence model | Needs real tracks run through `feature_extractor` to set sane defaults empirically — **resolved 2026-08-18, see `## Amendments`** (sanity-checked against 3 real tracks, not a representative corpus — revisit with more real data) |
+| Q2 | `exclude_threshold`/`cut_only_threshold` (§8, §9) have no principled default yet — design-v3 §6.5 itself calls the equivalent judgment "currently a hand-tuned heuristic threshold" pending the (v2) grid-confidence model | Needs real tracks run through `feature_extractor` to set sane defaults empirically — **resolved 2026-08-18** against 3 real tracks (see `## Amendments`), then **revisited 2026-08-24 against 69 and found to be the wrong lever**: the thresholds are defensible, but their *input* is mis-scaled, so retuning them would paper over a defect in `feature_extractor` §6. See the 2026-08-24 amendment |
 | Q3 | `structure_template`'s two-signal heuristic (§5) hasn't been validated against design-v3's own club-edit vs. film-master test set (D11) | Whether D5's tier-penalty conditioning and D27's cue-kind preference order get the right signal in practice |
 | Q4 | Should `hook_exit`/`hook_in` thresholds (§6) vary by `structure_template`, given Bollywood's vocal density is 70-80% (D22) vs. EDM's much lower baseline — does one fixed "significant drop" threshold work for both? | §6's threshold constants — currently assumed template-agnostic |
 | Q5 | `hook.py`'s `_bar_index_at` matches a `PhraseBoundary` back to its `per_bar_features` index via exact float equality on `position`/`start_time`, silently skipping the boundary (no error) on any mismatch — safe today only because `detect_hook` is always called with the same `raw`/`phrase_grid` pair `derive.py` just produced in the same call, never a cached or serialized copy (flagged in code review 2026-08-19, deliberately not fixed then: an epsilon-tolerance patch would guard a scenario that can't currently occur, and the real fix — giving `PhraseBoundary` its own `bar_index` field — is a public schema change, i.e. a **new version** of this spec, not a same-day amendment) | Whether `phrase_grid` ever gains a second source (a cached/serialized grid, a future boundary-merge step) — if so, this needs `PhraseBoundary.bar_index` added via a version bump, not another amendment |
@@ -433,6 +433,32 @@ the concrete payoff of splitting this module out from `feature_extractor` at all
 ---
 
 ## Amendments
+
+- **2026-08-24** — **D7 quarantine measured on a real 69-track corpus: it fires on
+  86% of the library** (52 `cut_only`, 7 `excluded`, 10 `ok`). Recorded here because
+  §8/§9's thresholds are where anyone investigating that number will look first —
+  **but they are not the cause, and lowering them is not the fix.**
+
+  §3 sets `grid_confidence = raw.downbeat_confidence`, and that input is mis-scaled:
+  `feature_extractor` §6 computes it as the margin between the best and second-best
+  bar phase by low-band energy, which in 4/4 music is near-zero precisely when the
+  drum programming is *tightest* (beats 1 and 3 both carry kick). Corpus median is
+  `0.053` against a `cut_only_threshold` of `0.15`. Tracks with unmistakable bar
+  structure score below tracks with none. Full diagnosis, a tested replacement
+  metric, and the recorded negative results are in
+  `resources/documentation/ingestion/feature_extractor/spec.md`'s 2026-08-24
+  amendment and its Q1/Q5.
+
+  **No threshold changed.** Retuning `cut_only_threshold` down to fit the current
+  metric's compressed range would restore the track count while keeping the
+  quarantine blind to what it is supposed to measure — D7 exists because "a wrong
+  beat grid poisons every edge it touches," and a threshold tuned to a broken input
+  cannot honour that. If `feature_extractor` §6's metric is replaced, **both**
+  thresholds need recalibrating to the new scale in the same pass: the candidate
+  replacement's observed floor is `0.027`, above this spec's `exclude_threshold` of
+  `0.01`, which would make `status="excluded"` unreachable.
+
+  Q2 above is updated to record that this revisit happened and what it concluded.
 
 - **2026-08-18** — Pre-implementation completion pass: no code exists against this
   spec yet (`overview.md` row 3: Spec Done, Code —), so every change below is

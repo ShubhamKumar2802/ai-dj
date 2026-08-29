@@ -508,7 +508,81 @@ tests/ingestion/feature_extractor/
 
 | # | Question | Blocks |
 |---|---|---|
-| Q1 | Does the phase-contrast downbeat heuristic (§6) hold up against `cue_derivation`'s D9 grid-origin logic in practice, or does its honestly-lower confidence quarantine too many tracks via D7? | Whether v1's downbeat approach is viable without revisiting the madmom/Xcode-license blocker |
+| Q1 | **Answered 2026-08-24 — yes, it quarantines far too many, and the root cause is more specific than this question assumed.** Measured on the real 69-track corpus: **52 `cut_only`, 7 `excluded`, 10 `ok`** — D7 fires on 86% of the library. `downbeat_confidence` median is `0.053` against a `cut_only_threshold` of `0.15`. See `## Amendments` for the diagnosis, the tested replacement, and what it does *not* fix | **Unblocked but not yet fixed.** The tier ladder cannot reach tier 2 on this library (`processing/edge_builder` spec §12 Q10: tier 2 eligible on 12 of 3,782 pairs, winning 0). A fix is a §6 change plus an `extractor_version` bump |
 | Q2 | Is a single `bpm_confidence` penalty term (Essentia vs. librosa delta) enough signal, or does `cue_derivation`/D7 need the two raw estimates separately to reason about disagreement itself? | `RawFeatures.bpm_confidence` shape — currently a single scalar (§2, §6) |
 | Q3 | JSON cache file size at scale — `per_bar_features[]` with a 12-dim `chroma_vector` per bar could run to a few hundred KB per track for a long film song; worth confirming this doesn't become a real cost at a few hundred tracks | Cache storage format (§5) — currently assumed fine, unverified at scale |
 | Q4 | `_LOCK_WAIT_TIMEOUT_S` (300s, §5, v3) is a round, defensible default, not empirically tuned — is it right for much larger files than the ~268s benchmark track, where extraction could plausibly take meaningfully longer than "a few seconds"? | §5's timeout constant — currently assumed generous enough, unverified against large-file extraction times |
+| Q5 | **Half-bar downbeat ambiguity is unresolved and, as of the 2026-08-24 investigation, unmeasured.** §6 picks the bar phase by low-band energy, but in 4/4 material beats 1 and 3 *both* carry kick — so the heuristic reliably finds the two-beat kick grid and then chooses between the two candidates near-arbitrarily. A consistently half-bar-shifted grid puts every "downbeat" on beat 3. Nothing in the pipeline currently detects or reports this | Tier 2's musicality specifically — a bass swap at "bar 8 of a 16-bar phrase" lands two beats out if the grid is shifted. Also any bar-aligned cut. Was masked by Q1's over-quarantining: while 86% of tracks were quarantined, the phase never had to be right |
+
+---
+
+## Amendments
+
+- **2026-08-24** — **Q1 answered; §6's `downbeat_confidence` diagnosed as mis-scaled.
+  No behaviour changed in this pass** — recorded so the analysis is not repeated, and
+  deliberately left unfixed pending a decision on §6's replacement metric.
+
+  **How it surfaced.** Verifying `Junction.bar_seconds` on the real corpus for
+  `processing/edge_builder` v2, which showed tier 2 winning **0 of 3,477 edges**
+  (that spec §12 Q10). Tracing that back: 52 of 69 tracks are `cut_only`, and §5's
+  tier-2 rule drops the tier whenever either side is quarantined.
+
+  1. **Root cause — the metric conflates two different failures.** §6 computes
+     `downbeat_confidence = (best_score − second_score) / best_score`, the margin
+     between the winning bar phase and the runner-up by low-band (20–150 Hz) energy.
+     In 4/4 music **beats 1 and 3 both carry kick**, so the top two phases are
+     routinely near-identical (top-2 phases sat 2 beats apart on 12 of 20 sampled
+     tracks). Measured per-phase energies:
+
+     | Track | Per-phase low-band energy | Confidence |
+     |---|---|---|
+     | Chhote Chhote Peg | `[168.4, 205.2, 157.8, 206.7]` | `0.007` |
+     | Disco Disco | `[46.6, 178.9, 58.9, 189.0]` | `0.054` |
+     | Desi Girl | `[69.1, 65.9, 66.6, 67.1]` | `0.029` |
+
+     The first two have **unmistakable** bar structure — kicks 3× the other beats —
+     and score *lower* than the third, which has no discernible structure at all. The
+     formula reports "the winner barely beat the runner-up," which for tight
+     programmed drums is the signature of a **good** grid, not a bad one. Corpus-wide
+     the metric is crushed toward zero: median `0.053`, max `0.644`, only one track
+     above `0.5`. Same class of defect as the `phrase.strength` finding recorded in
+     `processing/edge_builder` spec v1's amendments — a raw score read as a `[0,1]`
+     confidence.
+
+  2. **Tested replacement — "pair contrast."** The discriminating comparison is not
+     best-vs-second but **the two kick phases against the two non-kick phases**:
+     `(mean(top two) − mean(bottom two)) / mean(top two)`. Validated across all 69
+     tracks:
+
+     | | current | pair contrast |
+     |---|---|---|
+     | median | `0.053` | `0.168` |
+     | max | `0.644` | `0.817` |
+     | ≥ 0.15 | 13 tracks | **37 tracks** |
+
+     It discriminates rather than merely inflating: the eight worst tracks by pair
+     contrast (`Desi Girl` `0.027`, `Halka Halka` `0.031`, `Ding Dong` `0.045`) stay
+     well below any plausible threshold. **Caveat:** its floor is `0.027`, above
+     `cue_derivation`'s `exclude_threshold` of `0.01`, so *no* track would ever be
+     excluded — both thresholds are calibrated to the current metric's scale and
+     would need retuning alongside any swap. **Second caveat:** it assumes 4/4 with
+     kicks on 1 and 3 (F8's assumption), and would misread four-on-the-floor.
+
+  3. **Negative results, recorded so they are not retried.** Multi-band analysis was
+     tested as a way to separate the two kick phases. Median separation between them:
+     **low 7.1%** (the current feature), **mid 3.3%**, **high 4.2%**, **bass-range
+     chroma change 8.9%**. Mid and high are *worse* than low. Bass-range chroma change
+     (chord-root change, the expected downbeat cue) edges ahead on median but is
+     wildly inconsistent — 27–32% on two tracks, 1.3% on another. Full-spectrum chroma
+     change was also tried and is pure noise (four phases within 4%: `[0.342, 0.329,
+     0.340, 0.333]`). **No single band reliably identifies the true downbeat.** That
+     different tracks are separated by different bands is the signature of a problem
+     wanting a learned, temporally-smoothed model — i.e. the madmom DBN tracker §6
+     already names as the dropped v1 dependency — rather than another hand-picked band
+     and threshold.
+
+  4. **New Q5** records the half-bar ambiguity that (2) does *not* fix and (3) failed
+     to fix. Pair contrast measures whether a reliable two-beat kick grid exists; it
+     says nothing about which of the two kicks is beat 1. Over-quarantining had been
+     masking this — while 86% of tracks were quarantined, the phase never had to be
+     right.
