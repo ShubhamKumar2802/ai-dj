@@ -122,3 +122,9 @@ def _build(config: LLMServiceConfig) -> OpenAICompatibleLLMService:
 
 
 register_provider("opencode_zen", _build)
+# Same class, same _build factory — genuinely no OpenCode-Zen-specific logic
+# above (base_url/api_key/model are all config-driven). Gemini's OpenAI-
+# compatible endpoint (https://generativelanguage.googleapis.com/v1beta/openai)
+# speaks the same request/response shape, so a second registry name is all a
+# second OpenAI-compatible provider needs — no new code (2026-09-17).
+register_provider("gemini", _build)

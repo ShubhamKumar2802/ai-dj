@@ -200,11 +200,10 @@ D27, verbatim formula, computed from `raw.energy_curve[]` and
 against `phrase_grid[]` boundaries from §4:
 
 ```
-hook_exit = first phrase boundary where
-              energy_curve[] drops significantly
-              AND vocal_band_energy[] drops
-            occurring after a sustained high-energy vocal region
-            of at least ~8 bars
+hook_exit_candidates = every phrase boundary at or after the end of a
+            sustained high-energy vocal region of at least ~8 bars — no
+            upper bound on the search, no per-boundary drop check (see
+            ## Amendments, 2026-09-17)
 
 hook_in   = onset of that same first sustained high-energy, high-vocal plateau
             (the symmetric entry-side detector)
@@ -232,15 +231,25 @@ meaningful:
    contiguity — tolerates brief dips (a breath, a quiet fill) inside an
    otherwise-sustained plateau; None if no such window exists.
 
-3. e_low, e_high = percentile(energy_curve, [10, 90])   # p10-p90, not min/max —
-   robust to a handful of near-silent outlier bars that would blow out a
-   min/max-based range
-   v_low, v_high = percentile(vocal_band_energy, [10, 90])
-   hook_exit = first phrase_grid boundary after the plateau where the bar-to-bar
-   drop in energy_curve clears config.hook_energy_drop_fraction * (e_high - e_low)
-   AND the drop in vocal_band_energy clears
-   config.hook_vocal_drop_fraction * (v_high - v_low); None if no such boundary
-   exists before track end.
+3. window_end_time = plateau_end_time + bars_to_seconds(config.time_box_bars)
+   hook_exit_candidates = [b for b in phrase_grid
+                            if plateau_end_time <= b.position < window_end_time]
+   — every phrase boundary from the plateau's end up to `time_box_bars` past
+   it becomes a candidate `hook_exit`, full stop. No bar-to-bar drop check
+   (2026-09-17 amendment — the single-bar delta this step used to require is
+   exactly what let a breath between two sung lines pass as "the drop," per
+   T7). Bounded, but by an **already-existing** constant — `time_box_bars`
+   (§7's "one structural block: intro+buildup+hook," D27's own arithmetic) —
+   not a new one: two prior drafts of this window were tried and rejected
+   against real tracks before landing here (see `## Amendments`) — an 8-bar
+   window found *zero* candidates on one track (the real gap was 27 bars),
+   and no bound at all picked a candidate 110 bars past the plateau — 95%
+   through a different track — on another. Ranking which candidate *within*
+   the window is actually clean is `edge_builder`'s job (spec §4's
+   `vocal`/`phrase` cost terms already read the raw per-bar signal at each
+   candidate's own position, independent of anything computed here).
+   Empty list if the plateau exists but no phrase boundary falls in the
+   window (sparse phrasing, or the plateau is near the track's own end).
 ```
 
 ---
@@ -255,7 +264,13 @@ cue_in:   intro / riser_start    — when free_intro_end indicates real DJ paddi
           hook_in                — when it doesn't (film, genre switch, unknown)
           grid_start              — guaranteed fallback
 
-cue_out:  hook_exit               — preferred, musical (§6)
+cue_out:  hook_exit               — preferred, musical (§6). Emitted once per
+                                     candidate in `hook_exit_candidates`
+                                     (2026-09-17 amendment) — zero, one, or
+                                     several `hook_exit` cues per track, all
+                                     at the same preference cost; `edge_builder`
+                                     picks the winning position, this module
+                                     doesn't
           outro_start               — deferred to v2, see `## Amendments` —
                                         unreachable in v1; no detector formula
                                         exists for this branch (unlike hook_exit/
@@ -342,8 +357,15 @@ CueDerivationConfig:
   hook_high_energy_percentile        : float  # default 0.5 (§6, see ## Amendments)
   hook_high_vocal_percentile          : float  # default 0.5 (§6, see ## Amendments)
   hook_plateau_occupancy                : float  # default 0.7 (§6, see ## Amendments)
-  hook_energy_drop_fraction              : float  # default 0.25 (§6, see ## Amendments)
-  hook_vocal_drop_fraction                : float  # default 0.25 (§6, see ## Amendments)
+  hook_energy_drop_fraction              : float  # default 0.25 (§6, see ## Amendments) —
+  hook_vocal_drop_fraction                : float  # default 0.25 (§6, see ## Amendments) —
+                                                      # both UNUSED as of the 2026-09-17
+                                                      # amendment (§6's per-boundary drop
+                                                      # check they fed is gone); kept on the
+                                                      # config rather than removed since
+                                                      # removing a field is a version bump,
+                                                      # not an amendment (README's own rule),
+                                                      # and nothing depends on their absence
   phrase_boundary_novelty_std_multiplier   : float  # default 1.0 (§4, see ## Amendments)
   phrase_regularity_cv_threshold             : float  # default 0.3 (§5, see ## Amendments)
 
@@ -355,9 +377,14 @@ derive_cues(raw: RawFeatures, config: CueDerivationConfig) -> CueDerivationResul
                                                                     # ## Amendments)
   3. structure_template = classify_structure_template(raw, free_intro_end,
                                                         phrase_grid, config)    # §5
-  4. hook_in, hook_exit = detect_hook(raw, phrase_grid, config)                 # §6
+  4. hook_in, hook_exit_candidates = detect_hook(raw, phrase_grid, config)      # §6
+                                                     # hook_exit_candidates: list[float],
+                                                     # not float | None, since the
+                                                     # 2026-09-17 amendment (§6) — hook_in
+                                                     # keeps its single-value shape,
+                                                     # untouched by that amendment
   5. cue_ins, cue_outs = emit_cues(raw, grid_start, free_intro_end,
-                                    structure_template, hook_in, hook_exit,
+                                    structure_template, hook_in, hook_exit_candidates,
                                     phrase_grid, config)                          # §7
   6. status = quarantine(grid_confidence, config)                                 # §8
   7. assemble CueDerivationResult
@@ -377,6 +404,8 @@ it *doesn't* need one; rerun on every config/threshold change.
 | Q3 | `structure_template`'s two-signal heuristic (§5) hasn't been validated against design-v3's own club-edit vs. film-master test set (D11) | Whether D5's tier-penalty conditioning and D27's cue-kind preference order get the right signal in practice |
 | Q4 | Should `hook_exit`/`hook_in` thresholds (§6) vary by `structure_template`, given Bollywood's vocal density is 70-80% (D22) vs. EDM's much lower baseline — does one fixed "significant drop" threshold work for both? | §6's threshold constants — currently assumed template-agnostic |
 | Q5 | `hook.py`'s `_bar_index_at` matches a `PhraseBoundary` back to its `per_bar_features` index via exact float equality on `position`/`start_time`, silently skipping the boundary (no error) on any mismatch — safe today only because `detect_hook` is always called with the same `raw`/`phrase_grid` pair `derive.py` just produced in the same call, never a cached or serialized copy (flagged in code review 2026-08-19, deliberately not fixed then: an epsilon-tolerance patch would guard a scenario that can't currently occur, and the real fix — giving `PhraseBoundary` its own `bar_index` field — is a public schema change, i.e. a **new version** of this spec, not a same-day amendment) | Whether `phrase_grid` ever gains a second source (a cached/serialized grid, a future boundary-merge step) — if so, this needs `PhraseBoundary.bar_index` added via a version bump, not another amendment |
+| Q6 | ~~`hook_exit`'s drop check (§6) is a single bar-to-bar delta with no sustain requirement...~~ **Resolved and implemented 2026-09-17.** §6 now emits *every* phrase boundary from the plateau's end up to `time_box_bars` past it as a `hook_exit` candidate — no drop check — and `edge_builder`'s existing `vocal`/`phrase` cost terms (§4 of that spec) do the ranking. Two other window designs (8-bar-bounded, fully unbounded) were tried and rejected against real tracks first — see `## Amendments`. Confirmed on the full 15-track gold-set corpus: rendered `MixPlan` averages 80.1s/track (vs. the pre-fix corpus's much wider variance, incl. one track at 95% of its own length) — close to design-v3's ~60–70s/track reference | §6's `hook_exit` formula and every tier-3 cut sourced from it — resolved |
+| Q7 | **`hook_in`/`hook_exit` are an energy+vocal-density *proxy* for "the chorus," not real chorus/repetition detection** — they find "a loud, sustained, vocal-heavy passage," which usually coincides with the chorus in verse-chorus pop structure but isn't the same claim, and could misfire on a loud bridge or an extended ad-lib. The actual MIR-correct signal — a full pairwise self-similarity matrix over `RawFeatures.per_bar_features[].chroma_vector` (already computed and cached, 12-dim, Essentia `NNLSChroma`) to find sections that **repeat** later in the track — is explicitly out of scope here (§1's SSM rejection, `overview.md`'s "deliberately not counted as gaps"). Likely why `CueKind.chorus_start`/`chorus_end` exist in the enum (§2) but are never emitted by `cues.py` — probably the intended placeholder for this detector, though nothing in the record confirms that connection; worth confirming before building against it. Deliberately not pursued now — revisit once the full 15-track mix (W3) is audible and it's possible to judge whether the proxy actually misfires often enough to be worth the SSM work | Whether `hook_in`/`hook_exit` need to be replaced (not just Q6-patched) by a repetition-based detector; whether `chorus_start`/`chorus_end` get wired up or pruned from the enum |
 
 ---
 
@@ -433,6 +462,130 @@ the concrete payoff of splitting this module out from `feature_extractor` at all
 ---
 
 ## Amendments
+
+- **2026-09-17 (2)** — **Q6 resolved and implemented: `hook_exit` becomes
+  multi-candidate, dropping the per-boundary check entirely.**
+
+  **What changed, §6:** step 3's single `hook_exit = first phrase boundary
+  where the drop clears a threshold` becomes `hook_exit_candidates = every
+  phrase boundary in [plateau_end_time, plateau_end_time + time_box_bars)`.
+  No drop check — `hook_energy_drop_fraction`/`hook_vocal_drop_fraction` (§9)
+  go unused (kept on the config rather than removed; removing a field is a
+  version bump per the README, not an amendment).
+
+  **Why this over a sustain window** (the fix direction Q6 originally proposed):
+  a sustain requirement still commits to a single "best" answer at emission
+  time and can fail closed (no candidate at all) if the chorus never has a
+  genuinely sustained low-vocal stretch. Handing over every boundary in the
+  window and letting `edge_builder`'s already-existing `vocal`/`phrase` cost
+  terms (`processing/edge_builder` spec §4) rank them is more robust, and it's
+  what `cue_derivation` §7 already claims to do generally ("emits every
+  qualifying candidate per side... not a single winner") — `hook_exit`'s old
+  formula just never honored that for its own branch. Matches this project's
+  standing rule to keep signals soft rather than hard-gated (D10) — no new
+  threshold is introduced, an existing one is removed.
+
+  **Two self-corrections during validation, recorded so neither is retried.**
+  Both surfaced by actually running this against real tracks before calling
+  the fix done — not by reasoning about it in the abstract.
+
+  1. First draft added a *narrow* bounded window (`hook_exit_search_bars`,
+     8 bars past `plateau_end_time`), on an unvalidated guess. Checked
+     against "Lat Lag Gayee": `plateau_end_time` was `69.03s`, but the
+     nearest genuinely clean boundary was `118.12s` — **27 bars later**. The
+     8-bar window found **zero** candidates, silently falling back to
+     `time_boxed` (which happened to land on the identical position by
+     coincidence on this one track — not something to rely on).
+  2. Reverted to no bound at all — matching what the old (buggy) algorithm
+     actually searched, just without its fragile single-candidate gate.
+     Checked against a *different* real track ("Aaj Ki Raat", 297.6s long):
+     `edge_builder` picked a `hook_exit` candidate at `283.5s` — **110 bars**
+     (95% of the whole track) past `plateau_end_time`. Nothing in
+     `edge_builder`'s cost terms penalizes distance from the plateau
+     specifically, so an unbounded search can and did pick something nowhere
+     near any chorus.
+  3. **Landed on reusing `time_box_bars`** (§7's already-existing,
+     already-justified "one structural block: intro+buildup+hook ≈ 32 bars,"
+     D27's own arithmetic) as the bound, rather than inventing a third
+     number. Verified it resolves both prior failures: `69.03 + 32 bars
+     (58.75s) = 127.78s` comfortably covers the 27-bar case; `90.86 + 58.75 =
+     149.6s` excludes the 110-bar one.
+
+  `hook_exit_search_bars` never shipped, so removing it after step 1 is not
+  a version-bump situation — nothing was ever built against it.
+
+  **Confirmed on the full 15-track gold-set** after landing on `time_box_bars`:
+  12 of 15 tracks survive quarantine (T1, unrelated to this fix) and render to
+  one continuous WAV averaging **80.1s/track** (960.9s / 12 tracks) — close to
+  design-v3's ~60–70s/track reference, and a large improvement over the
+  window-less-bound run's 107s/track average (one track at 95% of its own
+  length). "Lat Lag Gayee" specifically: winning `hook_exit` moved from
+  `118.1s` (vocal level `49.8`, T7's original bug) to `96.3s` (vocal level
+  `37.5`, energy also drops from ≈−12/−14 to `−17.75` at the same bar — a
+  real quiet moment, not a single-bar artifact).
+
+  **`edge_builder` needs no change.** Read directly (`processing/edge_builder/
+  build.py`): it already builds its cost cube by iterating `track.cue_outs`/
+  `cue_ins` **by index**, computing `cue_kind`/`vocal`/`phrase`/`energy` costs
+  per index, then taking an `argmin` over the whole cube — nothing assumes at
+  most one cue per kind. It was already built to consume N candidates; this
+  amendment is the first time `cue_derivation` actually offers more than one.
+
+  **Contract change, not just an internal detail:** `detect_hook()`'s return
+  type changes from `tuple[float | None, float | None]` to `tuple[float |
+  None, list[float]]` for the `hook_exit` half (§9's `derive_cues` step 4).
+  Treated as an amendment rather than a version bump because `detect_hook` is
+  not in this module's exported surface (`__init__.py` exports
+  `CueDerivationResult`/`Cue`/`CueKind`/`CueDerivationConfig`/`derive_cues` —
+  not `detect_hook`), and `derive_cues`'s own public signature
+  (`RawFeatures -> CueDerivationResult`) is unchanged; `CueDerivationResult.
+  cue_outs` was always `list[Cue]` and always documented to potentially carry
+  several entries per kind (§7). Downstream, `edge_builder` already consumes
+  that list by index, so it stays fully compliant with no changes — the
+  README's actual test ("does code already implementing the old spec still
+  comply?") passes for every real consumer.
+
+  Logged a related but separate open question, **Q7**: `hook_in`/`hook_exit`
+  are an energy+vocal-density proxy for "the chorus," not true repetition-based
+  chorus detection — `RawFeatures.per_bar_features[].chroma_vector` (already
+  cached) is the signal a real self-similarity detector would need, but
+  building that is v2 scope (`overview.md`'s "deliberately not counted as
+  gaps"), deliberately not pursued now. This amendment doesn't touch that axis
+  at all — it only makes the exit point more reliable *within* whatever region
+  the existing proxy already identified as the plateau.
+
+- **2026-09-17** — **`hook_exit` false-positive: a single-bar vocal dip mistaken for
+  a section boundary (Q6).** Surfaced by ear: rendering a real 2-track `MixPlan`
+  (`render_mix`, tier 3 cut-on-the-1) across a `hook_exit`-sourced junction audibly
+  cut mid-vocal-phrase.
+
+  **Root cause**, `hook.py`'s `detect_hook()`: the per-boundary check
+  (`energy_drop = energy[bar_index-1] - energy[bar_index]`, same for `vocal_drop`)
+  is a single bar-to-bar delta against the immediately preceding bar only, with no
+  requirement that the drop persists — it takes the *first* `phrase_grid` boundary
+  after the plateau that clears `hook_vocal_drop_fraction * (v_high - v_low)`.
+
+  **Confirmed on a real track** — "Lat Lag Gayee" (Race 2, `content_hash
+  cb97d0d6…`): the plateau ends at bar 63 (t=116.1s); `hook_exit` fires at the very
+  next phrase boundary, bar 64 (t=118.0s). `vocal_band_energy`: bar 63 = `70.07`
+  (near the track's own p90, `68.15`), bar 64 = `49.83` — a drop of `20.24`,
+  comfortably clearing the threshold (`0.25 × (68.15 − 38.10) ≈ 7.5`) — bar 65 =
+  `67.22`, already back near the p90 high-vocal level one bar later. The "drop" that
+  triggered `hook_exit` fully reversed within a single bar: ordinary vocal
+  micro-dynamics (a breath, the gap between two sung lines — expected given
+  Bollywood's 70-80% vocal density, D22/Q4), not an instrumental/outro boundary.
+
+  **Not T1 or T2** (`overview.md`'s open-thread numbering carries over here as T7).
+  T1 is `downbeat_confidence` mis-scaling (grid/quarantine); T2 is half-bar phase
+  ambiguity. This is a distinct defect in the *drop* half of the `hook_exit`
+  formula, independent of both — it fires the same way regardless of grid phase or
+  quarantine status.
+
+  **No formula changed in this pass.** The fix direction is a sustain/hysteresis
+  requirement — e.g. require `vocal_band_energy` (and/or `energy_curve`) to stay
+  below threshold for some number of bars after the boundary, not just the one bar
+  immediately after — but the window length and threshold are untuned; recorded as
+  Q6 pending that decision.
 
 - **2026-08-24** — **D7 quarantine measured on a real 69-track corpus: it fires on
   86% of the library** (52 `cut_only`, 7 `excluded`, 10 `ok`). Recorded here because

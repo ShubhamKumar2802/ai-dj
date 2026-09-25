@@ -45,3 +45,9 @@ def test_opencode_zen_is_registered_by_default():
     # providers/__init__.py to run first, which registers the built-in provider.
     factory = get_provider_factory("opencode_zen")
     assert callable(factory)
+
+
+def test_gemini_is_registered_as_the_same_factory_as_opencode_zen():
+    # 2026-09-17: a second OpenAI-compatible provider (Gemini) needs a new
+    # registry name, not new code — both resolve to the exact same _build.
+    assert get_provider_factory("gemini") is get_provider_factory("opencode_zen")

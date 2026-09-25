@@ -22,6 +22,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "soundfile" },
     { name = "yt-dlp" },
 ]
 
@@ -41,6 +42,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "soundfile", specifier = ">=0.14.0" },
     { name = "yt-dlp", specifier = ">=2026.8.19" },
 ]
 

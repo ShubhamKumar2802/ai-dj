@@ -44,7 +44,7 @@ def emit_cues(
     free_intro_end: float,
     structure_template: Literal["edm", "film", "unknown"],
     hook_in: float | None,
-    hook_exit: float | None,
+    hook_exit_candidates: list[float],
     phrase_grid: list[PhraseBoundary],
     config: CueDerivationConfig,
 ) -> tuple[list[Cue], list[Cue]]:
@@ -90,9 +90,14 @@ def emit_cues(
     # construction — grid_start is the first downbeat).
     cue_ins = [c for c in cue_ins if c.position >= grid_start or c.kind == "riser_start"]
 
-    cue_outs: list[Cue] = []
-    if hook_exit is not None:
-        cue_outs.append(Cue(position=hook_exit, kind="hook_exit", confidence=_HOOK_CUE_CONFIDENCE))
+    # One Cue per candidate — 2026-09-17 amendment (spec §6): hook_exit is no
+    # longer a single detected point, edge_builder ranks whichever candidate
+    # is actually clean (§4 of that module's spec: vocal/phrase cost terms
+    # read each candidate's own position independent of this module).
+    cue_outs: list[Cue] = [
+        Cue(position=position, kind="hook_exit", confidence=_HOOK_CUE_CONFIDENCE)
+        for position in hook_exit_candidates
+    ]
 
     # time_boxed is anchored to this module's own top-preference *surviving*
     # cue-in candidate (cue_ins[0], always present post-filter) — spec's

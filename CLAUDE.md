@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repository is a bare `uv`-scaffolded Python project (`main.py`, `pyproject.toml`, `.python-version`, empty `README.md`). No source code, dependencies, or tests have been written yet — `src/` is empty and `main.py` only contains a placeholder `Hello from ai-dj!` entry point. Treat the architecture below as the intended design, not yet-implemented code.
 
-The full design rationale lives in `resources/ai-dj-domain-and-architecture.md` — read it before implementing any ingestion/processing/export module; this section is a condensed pointer, not a replacement. `resources/architecture_diagram.drawio` has the same pipeline as a diagram.
+The full design rationale lives in `resources/ai-dj-design-v3.md` — read it before implementing any ingestion/processing/export module; this section is a condensed pointer, not a replacement. `resources/architecture_diagram.drawio` has the same pipeline as a diagram.
 
 ## Commands
 
@@ -20,6 +20,12 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management (Py
 - Format: `uv run ruff format .`
 
 Source lives under `src/`; tests live under `tests/`, mirroring `src/`'s package structure (see `tests/README.md`).
+
+## Git workflow
+
+**All git operations are done manually by the user.** Never run a git command that mutates repository or branch state — `add`, `commit`, `push`, `branch`, `checkout`, `merge`, `rebase`, `reset`, `stash`, tag creation, etc. Read-only commands (`status`, `log`, `diff`, `show`) are fine for gathering context.
+
+When a commit is needed, write the commit message (and summarize what it would cover) and hand it to the user — do not stage or commit it yourself, even if asked to "commit this" in passing. If genuinely unclear whether a request wants a message drafted vs. actually committed, ask.
 
 ## Development workflow: spec-driven
 
@@ -55,7 +61,7 @@ Diagram: track list → analysis (metadata + cue points) → planning (edge scor
 
 `MixPlan`: tracks[], junctions[] (from/to, cue_out, cue_in, strategy_tier, length_bars, gain per side, automation envelopes).
 
-Full field lists and an example bass-swap junction are in `resources/ai-dj-domain-and-architecture.md` §4.
+Full field lists and an example bass-swap junction are in `resources/ai-dj-design-v3.md` §4.
 
 ### Build order
 

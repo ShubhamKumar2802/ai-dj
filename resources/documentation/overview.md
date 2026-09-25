@@ -13,12 +13,16 @@ Last checked: 2026-08-29.
 
 ## Working order
 
-Where things stand: **the analysis and planning layers are built and working
-end-to-end (`audio → Track[] → ScoredEdges → MixPlan`), and the render layer has no
-code at all** (`src/render/` does not exist). So nothing produced so far can be
-listened to yet.
+Where things stand: **the full pipeline is built and produces a listenable
+multi-track megamix** — `audio → Track[] → ScoredEdges → MixPlan → WAV`, N tracks
+in one continuous file, not just a 2-track skeleton. The 15-track curated
+`music/gold-set/` corpus renders end-to-end: 12 of 15 survive quarantine (T1, not
+a W3/T7 issue), averaging 80.1s/track — close to design-v3's ~60–70s/track
+reference.
 
-The critical path to a mix you can actually hear is now **W2 → W3**.
+The critical path now shifts to **quality**, not plumbing: **W4** (T1's
+quarantine bug — unblocks tier 2 and 3 more survivable tracks) and **W6**
+(weight/tier tuning against what this can now actually be heard doing).
 
 ### W1 — Implement `processing/path_search` · build step 5 — ✅ DONE 2026-08-29
 
@@ -37,30 +41,46 @@ Implementation matched the spec with no amendment needed. Real-corpus runs land 
 ~29 min for 15 tracks (D21 "signal, not constraint") and often `pool_exhausted`
 below 20 input tracks — both downstream of T1's over-quarantine, not path_search.
 
-### W2 — Render Milestone A · build step 0, the walking skeleton
+### W2 — Render Milestone A · the walking skeleton — ✅ DONE 2026-08-29
 
 | | |
 |---|---|
-| **Blocked by** | nothing — both render specs are Milestone-A complete |
+| **Blocked by** | nothing — both render specs were Milestone-A complete |
 | **Unblocks** | hearing *anything*; W3 |
 | **Done when** | one rendered WAV from a 2-track, 1-junction, tier-3 `MixPlan` |
 
-design-v3 §10 puts this **first**, before any search, precisely so "the renderer works,
-so real cue points plug into something already functioning." It was skipped; steps 1–4
-were built instead. That is why there is currently a complete planner and no way to
-hear its output. Tier 3 only — `length_bars = 0` degenerates to a splice, so this needs
-no EQ, no envelopes, no time-stretch.
+Done: `src/render/transition_renderer/` (`StereoPCM`, strategy registry mirroring
+`llm_service`'s, `cut_on_the_one` tier-3 splice with a 5 ms anti-click fade,
+`render_junction` dispatch; tiers 2/4/5 raise `UnregisteredStrategyError`) and
+`src/render/playlist_renderer/` (`render_mix` — one junction / two tracks, `ValueError`
+on anything larger — and `write_wav` via `soundfile`). 15 tests, all synthetic. Both
+render specs got a 2026-08-29 amendment first: `StereoPCM` is `(n_samples, 2)`
+channels-last (matches `load_canonical` + `soundfile`, zero transposes); tier-3
+`a_slice` starts at sample 0 in Milestone A (§10 Q2 resolved); `render_mix`'s scope
+guard is a raised error not a bare `assert`; §6/§5 name `pedalboard` / `pyrubberband` /
+Essentia `LoudnessEBUR128` as the Milestone-B DSP libs. `example_render_skeleton.py`
+(hand-typed cues) and `example_render_from_music.py` (real `ingest → build_edges →
+search_path(target=2) → render`) both write a playable WAV. `FADE_MS = 5` still
+unvalidated by ear (`transition_renderer` §10 Q1).
 
-### W3 — Render Milestone B · multi-junction assembly
+### W3 — Render Milestone B · multi-junction assembly — ✅ DONE 2026-09-17
 
 | | |
 |---|---|
-| **Blocked by** | W2; and a design decision — `playlist_renderer` §9 **Q1**: does this module slice each track's body, or does `transition_renderer` grow a "max duration for B" parameter? (W1 is done — real `MixPlan`s are available now) |
-| **Unblocks** | **the first full mix you can hear.** Also `fade_out_bars` (Q3), set-wide LUFS gain, and W6's tuning |
-| **Done when** | a 15-track `MixPlan` renders to one continuous WAV |
+| **Blocked by** | nothing — design decided and implemented same day |
+| **Unblocks** | **the first full mix you can hear** — now real. `fade_out_bars` (Q3), and W6's tuning |
+| **Done when** | a 15-track `MixPlan` renders to one continuous WAV — **done**, `music/gold-set/`'s 12 survivors render to a single 16.0 min WAV |
 
-Q1 was explicitly deferred "until `edge_builder`/`path_search` exist." Both now do, so
-it is answerable — resolve it in the spec before writing the loop.
+`playlist_renderer` §9 Q1 resolved: this module slices each track's own body
+(`entry_i`/`exit_i` windowing from flanking junctions, D24's relaxed ends at the
+two open sides); `transition_renderer.render_junction` is no longer called for
+tier-3 boundaries (no blend content to render — `linear_edge_fade` promoted to a
+shared helper both modules import instead). Q3 resolved alongside it:
+`equal_power_fade_to_silence` on the closer's tail whenever `fade_out_bars` is
+set, which is every real v1 mix. Subsumes Milestone A exactly (byte-identical
+output for the 2-track case). 21 render tests (up from 15), all passing; example
+scripts unchanged and still work. Required T7 to land first — an un-fixed
+`hook_exit` would have baked its bug into every interior junction.
 
 ### W4 — Fix `downbeat_confidence` · `feature_extractor` §6
 
@@ -119,15 +139,15 @@ with no implementation.
 | Step | Module | design-v3 ref | Spec | Code |
 |---|---|---|---|---|
 | — | `acquisition/youtube_downloader` — new layer upstream of `ingestion/`, not in design-v3's build order; produces the local paths `ingestion/orchestrator` consumes | — | Done | Done |
-| 0 | Walking skeleton — exercises Milestone A of #6 + #7 | §10 | Done | **— (W2)** |
+| 0 | Walking skeleton — exercises Milestone A of #6 + #7 | §10 | Done | Done (W2) |
 | 1 | `ingestion/feature_extractor` — **spec v3**; §6's `downbeat_confidence` is defective, see T1 | D6, D25 | Done | Done |
 | 2 | Per-bar feature stack — folded into `feature_extractor` §7, not its own module | §6.3 step 1 | Done (in #1) | Done (in #1) |
 | 3 | `ingestion/cue_derivation` | D8/D9/D22/D27 | Done | Done |
 | — | `ingestion/orchestrator` — glue for §4's `RawFeatures → Track[]` arrow; no step number, sits between #3 and #4 | §4 | Done | Done |
 | 4 | `processing/edge_builder` — **spec v2** (`Junction.bar_seconds`; v1 in `archive/spec-v1.md`) | D4/D5/D19 | Done | Done |
 | 5 | `processing/path_search` — owns `MixPlan`/`TrackRef`/`MixPlanConfig` in `common/contracts/` | D3/D21 | Done | Done |
-| 6 | `render/transition_renderer` — Milestone A **specced**, Milestone B (tiers 2/4/5, LUFS, tempo lock) documented | D17 | Done | **— (W2/W5)** |
-| 7 | `render/playlist_renderer` — Milestone A **specced**, Milestone B (multi-junction, MP3, CUE sheet) documented | D17 | Done | **— (W2/W3)** |
+| 6 | `render/transition_renderer` — Milestone A **built** (W2); Milestone B (tiers 2/4/5, LUFS, tempo lock) documented, uses `pedalboard`/`pyrubberband` | D17 | Done | Milestone A done (W2); tiers 2/4/5 W5 |
+| 7 | `render/playlist_renderer` — Milestone A **built** (W2); Milestone B (multi-junction, MP3, CUE sheet) documented | D17 | Done | Milestone A done (W2); multi-junction W3 |
 | 8 | `ingestion/familiarity_scorer` — calls `llm_service`, writes `Track.familiarity_score`/`.era`/`.is_club_edit` | §6.1 | — | **— (W7)** |
 
 ## Infrastructure (`common/`)
@@ -155,6 +175,8 @@ is a pointer list, not a second copy.
 | T4 | **Should the tier ladder prefer blends over cuts for film material?** §1.9 says tiers 3–4 are the *correct* idiom for film masters, not a degradation. Deferred until a mix can be A/B'd | Deferred to W6 | `edge_builder` §12 Q10 |
 | T5 | **Weights are untunable until an eval harness exists** (D26). Affects `edge_builder`'s seven `w_*`, `path_search`'s λ/μ/ν/β, and both tier-penalty tables | Blocked on W3/W6 | `edge_builder` §12 Q3/Q8, `path_search` §15 Q5 |
 | T6 | **`test_concurrent_calls_for_same_key_extract_once` flaked once** under heavy CPU load (68s run vs 25s baseline), passed 3/3 in isolation and twice since. Not a regression — no `feature_extractor` code changed | Watch; revisit if it recurs in CI | not logged in a spec — here only |
+| T7 | **`hook_exit` fired on a single-bar vocal dip** (a breath/pause between sung lines) mistaken for a section boundary, even when the vocal resumed at full intensity the very next bar — confirmed on a real track and by ear on a rendered `MixPlan` (tier 3 cut landed mid-vocal-phrase). **Fixed and implemented 2026-09-17: `hook_exit` is now multi-candidate — every phrase boundary within `time_box_bars` of the plateau's end, no drop check — ranked by `edge_builder`'s existing cost terms (that module needed no code change).** Two window designs tried and rejected on real tracks first (8-bar-bounded: zero candidates; unbounded: picked a point 95% through a track) before landing on reusing `time_box_bars`. Validated on the full 15-track gold-set: 80.1s/track average (was 107s/track pre-fix) | **Fixed** | `cue_derivation` §10 Q6 + 2026-09-17 (2) amendment |
+| T8 | **`hook_in`/`hook_exit` are an energy+vocal-density proxy for "the chorus," not true repetition-based chorus detection** — a full self-similarity pass over the already-cached per-bar `chroma_vector` would be the real fix; deliberately deferred. Possibly the intended purpose of the dead `chorus_start`/`chorus_end` cue kinds, unconfirmed | Deferred — revisit once W3's full mix is audible | `cue_derivation` §10 Q7 |
 
 ## Deliberately not counted as gaps
 
@@ -164,6 +186,8 @@ re-checking the doc first:
 - Grid-confidence calibration model (§6.5) — explicitly v2. **Note:** T1 is *not* this;
   it is a defect in the v1 heuristic, not the absence of the v2 model.
 - Template-constrained decoding / SSM repetition / section labelling (§6.3 Steps 2–3) — v2.
+  **Note:** T8 has the fuller writeup — why this matters specifically for
+  `hook_in`/`hook_exit`'s reliability, and the `chroma_vector` data it would build on.
 - Tempo ramping (D18) — "v1 status: not needed."
 - Natural-language mix-config parsing (§6.1) — "interface sugar," deferred.
 - Junction-preview / eval harness (§9) — a dev tool that falls out of D17's testability

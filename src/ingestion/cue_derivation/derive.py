@@ -17,14 +17,14 @@ def derive_cues(raw: RawFeatures, config: CueDerivationConfig) -> CueDerivationR
     grid_start, grid_confidence, free_intro_end = derive_grid_origin(raw)
     phrase_grid, phrase_length_bars = detect_phrase_boundaries(raw, config)
     structure_template = classify_structure_template(raw, free_intro_end, phrase_grid, config)
-    hook_in, hook_exit = detect_hook(raw, phrase_grid, config)
+    hook_in, hook_exit_candidates = detect_hook(raw, phrase_grid, config)
     cue_ins, cue_outs = emit_cues(
         raw,
         grid_start,
         free_intro_end,
         structure_template,
         hook_in,
-        hook_exit,
+        hook_exit_candidates,
         phrase_grid,
         config,
     )

@@ -45,7 +45,10 @@ application — Renderer — target depends on the set, not the track").
 
 ```
 StereoPCM:
-  samples      : np.ndarray   # shape (2, n_samples), float32
+  samples      : np.ndarray   # shape (n_samples, 2), float32 — channels-last,
+                               # matching ingestion/feature_extractor/loader.py's
+                               # own StereoPCM and soundfile's frame-major layout
+                               # (see Amendments 2026-08-29)
   sample_rate  : int          # must be 48000 (D25) — carried explicitly on the
                                # value itself, not assumed by the caller; every
                                # function in this module asserts it rather than
@@ -102,11 +105,13 @@ renderable at all (see `## Amendments`).
 blend region — `render_junction` for tier 3 is exactly:
 
 ```
-output = fade_out(A.samples[A.cue_in : cue_out], FADE_MS) ++ fade_in(B.samples[cue_in : B_end], FADE_MS)
+output = fade_out(A.samples[A_start : cue_out], FADE_MS) ++ fade_in(B.samples[cue_in : B_end], FADE_MS)
 ```
 
-a literal splice, not a blend — the two fades below don't overlap (§4's anti-click
-treatment is not a tier-2-style crossfade wearing a different name).
+where `A_start = 0` in Milestone A — the opener plays from the top of its file (see
+Amendments 2026-08-29 and §5). A literal splice, not a blend — the two fades below
+don't overlap (§4's anti-click treatment is not a tier-2-style crossfade wearing a
+different name).
 
 **Two invariants that apply even to this degenerate case** (D17):
 
@@ -152,11 +157,11 @@ signature never changes.
 ```
 cut_on_the_one(junction: Junction, audio_a: StereoPCM, audio_b: StereoPCM) -> StereoPCM:
   assert audio_a.sample_rate == audio_b.sample_rate == 48000        # D25
-  a_slice = audio_a.samples[:, to_sample(audio_a's A.cue_in) : to_sample(junction.cue_out)]
-  b_slice = audio_b.samples[:, to_sample(junction.cue_in) : ]        # to natural end (D24)
-  a_slice = linear_fade_out(a_slice, FADE_MS)
-  b_slice = linear_fade_in(b_slice, FADE_MS)
-  return StereoPCM(samples=concatenate([a_slice, b_slice], axis=1), sample_rate=48000)
+  a_slice = audio_a.samples[0 : to_sample(junction.cue_out), :]      # from the top (Milestone A)
+  b_slice = audio_b.samples[to_sample(junction.cue_in) :, :]         # to natural end (D24)
+  a_slice = linear_edge_fade(a_slice, sample_rate, fade_in=False)    # fades.py (§5.1)
+  b_slice = linear_edge_fade(b_slice, sample_rate, fade_in=True)     # fades.py (§5.1)
+  return StereoPCM(samples=concatenate([a_slice, b_slice], axis=0), sample_rate=48000)
 ```
 
 **`FADE_MS = 5`** — a fixed constant, not derived from anything musical (§10's own
@@ -165,11 +170,35 @@ like the tier ladder). Linear, not equal-power — over 5ms the curve shape is
 inaudible; equal-power exists to keep perceived loudness constant across a *longer*
 crossfade, which doesn't apply here since the two fades never overlap.
 
-**Where `A.cue_in` comes from for tier 3's `a_slice` start:** for a track with no
-preceding junction (the walking skeleton's track A, or any set-opening track under
-D24), it's the track's own `cue_in` from its `MixPlan.tracks[]` entry — not something
-this module derives; `playlist_renderer` is responsible for supplying the right start
-point for whichever track sits at each position (§ of that spec).
+### 5.1 Shared anti-click fade (`fades.py`) — 2026-09-17 amendment
+
+```
+linear_edge_fade(segment: np.ndarray, sample_rate: int, *, fade_in: bool) -> np.ndarray
+```
+
+Promoted from a private helper inside `cut_on_the_one.py` (where `FADE_MS` still
+lives — this function reads it, doesn't own a second copy) to its own module,
+because `playlist_renderer`'s Milestone B body-slicer (`playlist_renderer` spec
+§3, W3) needs the exact same anti-click treatment at every track-body boundary,
+not just at a tier-3 junction. Behavior is byte-for-byte unchanged — same ramp,
+same `FADE_MS`, same "never overlaps" property — only its location and importability
+changed. `cut_on_the_one` still uses it exactly as before; **this module's own §0
+invariant is untouched** — `render_junction` still takes one `Junction` in
+isolation and knows nothing about track bodies, sequencing, or any other junction.
+`playlist_renderer` imports `linear_edge_fade` directly; it does not call
+`render_junction` for tier-3 boundaries any more (see that spec's §3 amendment for
+why: an interior track needs both a fade-in *and* a fade-out on the same body,
+which `render_junction`'s per-pair, whole-track-shaped contract can't express
+without artificially reconstructing shifted `Junction` copies).
+
+**Where `a_slice` starts (Milestone A): sample `0`.** `render_junction` receives only
+the `Junction`, which carries no opener `cue_in`, and `render_mix` does no slicing
+(`playlist_renderer` §3) — so the walking skeleton's opener plays from the top of its
+file to `junction.cue_out`. This is consistent with `path_search`'s `plan_builder`,
+which leaves `TrackRef.cue_in = None` on a set-opening track (D24's free cue-in).
+Threading a **non-zero** opener `cue_in` — a mid-set track once Milestone B slices
+track bodies — is deferred to Milestone B; it resolves §10 Q2 for Milestone A (see
+Amendments 2026-08-29).
 
 ---
 
@@ -177,6 +206,14 @@ point for whichever track sits at each position (§ of that spec).
 
 Not built in this pass; recorded here so the interface (§4) doesn't need to change
 shape when these land.
+
+**DSP comes from libraries, not hand-rolled code.** Each `strategies/*.py` imports
+what it needs — `StrategyFn`'s signature (§4) is unchanged. `pedalboard`
+(`HighpassFilter`, `LowShelfFilter` + `HighShelfFilter` for the 3-band bass swap,
+`Delay` for tier 4's echo-out, `Gain`) covers tiers 2/4/5's effects; `pyrubberband`
+or `librosa.effects.time_stretch` covers `rate_b` beat-lock; `playlist_renderer`'s
+set-wide LUFS reuses Essentia's `LoudnessEBUR128` (already a dependency). All operate
+on numpy float32 in/out (see Amendments 2026-08-29).
 
 - **Tier 2 — bass swap** (§1.9's worked example, D19's ±3% gate): non-zero
   `length_bars`, `envelopes[]` populated per the automation curves in design-v3's
@@ -212,10 +249,12 @@ shape when these land.
 src/render/transition_renderer/
   __init__.py            # public exports: StereoPCM, Junction, Envelope,
                           # render_junction, register_strategy,
-                          # UnregisteredStrategyError
+                          # UnregisteredStrategyError, linear_edge_fade
   schema.py                # StereoPCM (§2); re-exports Junction/Envelope from
                             # common.contracts.schema — not defined here (§2)
   errors.py                 # UnregisteredStrategyError
+  fades.py                   # linear_edge_fade() (§5.1) — shared with
+                              # playlist_renderer's Milestone B body-slicer
   render.py                   # render_junction() — dispatch (§4)
   strategies/
     __init__.py                # imports every built-in strategy module, registering
@@ -227,9 +266,12 @@ src/render/transition_renderer/
 tests/render/transition_renderer/
   conftest.py                 # synthetic StereoPCM fixture generator
   test_schema.py                # (only if validation logic exists beyond field types)
-  test_render.py                  # dispatch + unregistered-tier errors (§4)
+  test_fades.py                   # linear_edge_fade() ramp correctness (§5.1,
+                                   # 2026-09-17 amendment) — direct tests now
+                                   # that it's a public, importable function
+  test_render.py                    # dispatch + unregistered-tier errors (§4)
   strategies/
-    test_cut_on_the_one.py         # splice/fade correctness (§7)
+    test_cut_on_the_one.py           # splice/fade correctness (§7)
 ```
 
 ---
@@ -250,11 +292,74 @@ tests/render/transition_renderer/
 | # | Question | Blocks |
 |---|---|---|
 | Q1 | `FADE_MS = 5` (§5) is an unvalidated guess at "long enough to kill a click, short enough to stay a cut" — has anyone confirmed this by ear against the walking skeleton's actual output? | Whether Milestone A's implementation needs a constant change before it's "done" |
-| Q2 | Where exactly does a track's own `cue_in`/`cue_out` (for the body *outside* any junction) live in `MixPlan.tracks[]`'s trimmed Milestone-A shape? Referenced here (§5) but owned by `playlist_renderer`'s spec | Cross-spec consistency — resolve when drafting `playlist_renderer/spec.md` |
+| Q2 | ~~Where exactly does a track's own `cue_in`/`cue_out` (for the body *outside* any junction) live in `MixPlan.tracks[]`'s trimmed Milestone-A shape?~~ **Resolved** — `TrackRef.cue_in`/`cue_out` in `common/contracts/schema.py` (`path_search` spec §2). For Milestone A the opener's `a_slice` starts at sample `0` regardless (§5, Amendments 2026-08-29); consuming a non-zero opener `cue_in` is Milestone B | ~~Cross-spec consistency~~ — closed |
 
 ---
 
 ## Amendments
+
+- **2026-09-17** — **`linear_edge_fade` promoted to a shared, public helper
+  (§5.1), for W3's multi-junction assembly.** No behavior change to
+  `cut_on_the_one` or `render_junction` — same ramp math, same `FADE_MS`,
+  same call sites' effective output. What changes: the function moves out of
+  `cut_on_the_one.py` (private `_linear_fade`) into its own `fades.py`
+  (public `linear_edge_fade`), and `playlist_renderer`'s Milestone B
+  body-slicer becomes a second caller.
+
+  **Why:** `playlist_renderer` spec §3 (this same date) resolves that spec's
+  §9 Q1 — an interior track in an N-track mix needs *both* a fade-in (it was
+  just cut into) and a fade-out (it's about to be cut again) on the same
+  body, applied at each boundary independently. `render_junction`'s contract
+  (one `Junction`, two *whole* tracks, "A from 0, B to natural end") has no
+  way to express that without `playlist_renderer` reconstructing
+  artificially-shifted `Junction` copies and pre-trimmed buffers per call —
+  fragile, and it still can't apply both fades to one body in one pass. Pulling
+  the fade primitive out and letting `playlist_renderer` slice+fade each
+  track's body directly is simpler and doesn't require inventing a second
+  `Junction`.
+
+  **This module's own §0 invariant is unaffected.** `render_junction` is
+  still callable on a single junction in isolation, still knows nothing about
+  sequencing or any other junction — it just isn't in `playlist_renderer`'s
+  call path for tier-3 boundaries any more (tier 3 has no blend content to
+  render, `length_bars = 0`; there was never anything for `render_junction`
+  to contribute there beyond the fade math this amendment relocates).
+  `render_junction` remains the right entry point for a future tier with
+  real blend content (`length_bars > 0`) — `playlist_renderer` would call it
+  for those junctions specifically once tiers 2/4/5 exist (§6), and use the
+  direct slice+fade path only where `length_bars == 0`.
+
+  1. **§5 / §5.1** — new `fades.py`; `cut_on_the_one.py` imports
+     `linear_edge_fade` instead of defining `_linear_fade` privately.
+  2. **§8** — file layout gains `fades.py` / `test_fades.py`; `__init__.py`
+     exports `linear_edge_fade`.
+
+- **2026-08-29** — **`StereoPCM` axis order, tier-3 opener slice start, and Milestone B
+  DSP libraries.** Surfaced while planning W2, the first implementation of this spec. No
+  code implements the spec, so this is an amendment on the same basis as the two entries
+  below.
+  1. **§2** — `StereoPCM.samples` shape changes from `(2, n_samples)` to **`(n_samples, 2)`**
+     (channels-last), float32. This matches the `StereoPCM` that
+     `ingestion/feature_extractor/loader.py` already defines and `load_canonical` returns,
+     and `soundfile`'s frame-major layout — so wiring the real loader and the WAV writer
+     needs zero transposes. No field renamed; `sample_rate` unchanged.
+  2. **§3 / §5** — the tier-3 pseudocode's array ops follow the new axis order:
+     `audio_a.samples[:, s0:s1]` → `audio_a.samples[s0:s1, :]`;
+     `concatenate([a_slice, b_slice], axis=1)` → `axis=0`. The general segment-math formula
+     in §3 (unused by tier 3) is unaffected.
+  3. **§5 + §10 Q2** — in Milestone A the opener's `a_slice` starts at **sample 0**.
+     `render_junction` receives only the `Junction` (which carries no opener `cue_in`), and
+     `render_mix` does no slicing (`playlist_renderer` §3), so the walking-skeleton opener
+     plays from the top of its file to `junction.cue_out`. `TrackRef.cue_in` is `None` for
+     a set-opening track (`path_search` `plan_builder`), consistent with this. Consuming a
+     non-zero opener `cue_in` — a mid-set track under Milestone B's body assembly — is
+     deferred to Milestone B. **Q2 is resolved for Milestone A** on this basis.
+  4. **§6** — the deferred tiers name their libraries rather than hand-rolled DSP:
+     **`pedalboard`** for tier 2/4/5 effects (`HighpassFilter`, `LowShelfFilter` +
+     `HighShelfFilter` for the 3-band bass swap, `Delay` for tier 4's echo-out, `Gain`),
+     and **`pyrubberband`** or `librosa.effects.time_stretch` for `rate_b` beat-lock. Both
+     are numpy float32 in/out, so `StrategyFn`'s signature (§4) is unchanged. Set-wide LUFS
+     in `playlist_renderer` reuses Essentia's `LoudnessEBUR128` (already a dependency).
 
 - **2026-08-24** — **`Junction` gained `bar_seconds`** (`edge_builder` spec **v2**
   §2/§6, which owns the contract). This module could not previously execute any tier

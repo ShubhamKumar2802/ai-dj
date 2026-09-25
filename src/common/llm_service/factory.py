@@ -24,6 +24,11 @@ class LLMServiceConfig(BaseModel):
     model: str
     base_url: str
     api_key: str
+    # Which .env variable holds the credential for this provider — config-driven
+    # since 2026-09-17 (was hardcoded to OPEN_CODE_ZEN_API_KEY; a second real
+    # provider, Gemini, needs its own credential name). No Python default, same
+    # as every other field here.
+    api_key_env_var: str
     max_concurrency: int
     request_timeout_s: float
     cache_enabled: bool
@@ -34,24 +39,34 @@ def load_config(
     config_path: str | Path | None = None,
     env_path: str | Path | None = None,
 ) -> LLMServiceConfig:
-    """Credentials from `.env` (OPEN_CODE_ZEN_API_KEY), everything else from
-    config.yaml's `llm_service:` section.
+    """Credentials from `.env`, everything else from config.yaml's
+    `llm_service:` section — including *which* `.env` variable to read the
+    credential from (`api_key_env_var`), so this isn't hardcoded to one
+    provider's naming (2026-09-17 amendment, spec §6).
     """
     resolved_config_path = Path(config_path) if config_path is not None else _DEFAULT_CONFIG_PATH
     resolved_env_path = Path(env_path) if env_path is not None else _DEFAULT_ENV_PATH
 
     load_dotenv(resolved_env_path)
-    api_key = os.environ.get("OPEN_CODE_ZEN_API_KEY", "")
-    if not api_key:
-        raise ValueError(
-            f"OPEN_CODE_ZEN_API_KEY is not set — add it to .env (checked {resolved_env_path})"
-        )
 
     data: dict = {}
     if resolved_config_path.exists():
         with resolved_config_path.open() as f:
             data = yaml.safe_load(f) or {}
     section = data.get("llm_service", {})
+
+    env_var_name = section.get("api_key_env_var")
+    if not env_var_name:
+        raise ValueError(
+            "llm_service.api_key_env_var is not set in "
+            f"{resolved_config_path} — add it (e.g. api_key_env_var: OPEN_CODE_ZEN_API_KEY)"
+        )
+
+    api_key = os.environ.get(env_var_name, "")
+    if not api_key:
+        raise ValueError(
+            f"{env_var_name} is not set — add it to .env (checked {resolved_env_path})"
+        )
 
     return LLMServiceConfig(api_key=api_key, **section)
 

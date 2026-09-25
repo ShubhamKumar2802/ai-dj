@@ -19,6 +19,31 @@ def wheel_distance(n_a: int, n_b: int) -> int:
     return min(diff, 12 - diff)
 
 
+def reachable_keys(key: str | None) -> set[str]:
+    """The domain doc's (resources/ai-dj-domain-and-architecture.md §1.1) three
+    free moves from `key`, plus `key` itself: same key; +-1, same letter
+    (perfect fifth); same number, flip letter (relative major/minor). Empty
+    set if `key` is None or unparseable — such a track can never appear in a
+    Camelot-adjacency-only chain (experiments/llm_camelot_sequencer — the one
+    caller that treats key as a hard gate rather than the soft key_distance
+    cost every other consumer of this module uses)."""
+    parsed = _parse_camelot(key)
+    if parsed is None:
+        return set()
+    number, letter = parsed
+    other_letter = "A" if letter == "B" else "B"
+
+    def _wrap(n: int) -> int:
+        return ((n - 1) % 12) + 1
+
+    return {
+        f"{number}{letter}",
+        f"{_wrap(number - 1)}{letter}",
+        f"{_wrap(number + 1)}{letter}",
+        f"{number}{other_letter}",
+    }
+
+
 def key_distance(key_a: str | None, key_b: str | None) -> float:
     parsed_a = _parse_camelot(key_a)
     parsed_b = _parse_camelot(key_b)

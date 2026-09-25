@@ -22,6 +22,9 @@ class CueDerivationConfig:
     hook_high_energy_percentile: float = 0.5
     hook_high_vocal_percentile: float = 0.5
     hook_plateau_occupancy: float = 0.7
+    # Unused as of the 2026-09-17 amendment (§6's per-boundary drop check they
+    # fed is gone) — kept on the config rather than removed; removing a field
+    # is a version bump, not an amendment (see resources/documentation/README.md).
     hook_energy_drop_fraction: float = 0.25
     hook_vocal_drop_fraction: float = 0.25
 

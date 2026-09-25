@@ -1,0 +1,31 @@
+# prompt_version: 1
+You are analyzing a Bollywood/film song's audio telemetry to find its structural
+boundaries. The track is {duration:.1f} seconds long, {bpm:.1f} BPM, {beats_per_bar}
+beats per bar.
+
+Per-bar telemetry (one value per bar, all arrays aligned by index):
+bar_start_times (seconds): {bar_times}
+rms (loudness, per bar): {rms}
+spectral_flux (per bar): {spectral_flux}
+low_band_energy (bass, per bar): {low_band_energy}
+vocal_band_energy (300Hz-3kHz vocal presence, per bar): {vocal_band_energy}
+
+Identify, in seconds from the start of the track:
+- intro_end: where the intro ends and the first main section (verse or
+  pre-chorus) begins — typically where rms/low_band_energy first rise
+  sustainedly from a quieter opening.
+- chorus1_start: where the FIRST chorus/hook begins — typically the first
+  sustained plateau of high rms AND high vocal_band_energy together, distinct
+  from a verse.
+- chorus1_end: where that same first chorus ends — the first significant drop
+  in rms and/or vocal_band_energy after chorus1_start.
+- outro_start: where the outro/fade begins, if there is a clear one — often a
+  sustained drop in rms/vocal_band_energy near the end of the track. Return
+  null if there is no clear outro (the track just ends, or fades within a
+  couple of bars).
+
+All four values must fall within [0, {duration:.1f}] and satisfy
+intro_end <= chorus1_start < chorus1_end <= outro_start (when outro_start is
+given). Make your best estimate for intro_end/chorus1_start/chorus1_end even
+if uncertain — null is only an expected answer for outro_start, on a track
+that doesn't have a clear one.

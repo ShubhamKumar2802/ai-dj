@@ -173,12 +173,18 @@ never hand-format strings.
 ```
 LLMServiceConfig — every field required, none of them defaulted in Python:
   provider          : str              # a provider registry key (see below) —
-                                        # "opencode_zen" is the only one registered
-                                        # in v1, but this is a lookup, not a fixed
-                                        # choice
-  model             : str              # a free OpenCode Zen model id
-  base_url          : str              # e.g. "https://opencode.ai/zen/v1"
+                                        # "opencode_zen" and "gemini" are both
+                                        # registered as of 2026-09-17, resolving to
+                                        # the same OpenAICompatibleLLMService; this
+                                        # is a lookup, not a fixed choice
+  model             : str              # a model id for the configured provider
+  base_url          : str              # e.g. "https://opencode.ai/zen/v1" or
+                                        # Gemini's OpenAI-compat endpoint (below)
   api_key           : str              # credential — never hardcoded, never logged
+  api_key_env_var   : str              # which .env variable holds it (2026-09-17
+                                        # amendment) — config-driven so a second
+                                        # provider isn't forced to share the first
+                                        # provider's credential name
   max_concurrency   : int              # cap for generate_batch (§8)
   request_timeout_s : float            # per-call timeout
   cache_enabled     : bool
@@ -194,12 +200,15 @@ elsewhere warn against; there is exactly one place to change, say, the default
 `max_concurrency`, not two.
 
 `config` is optional — when omitted, `get_llm_service()` loads it itself: `api_key`
-from the `OPEN_CODE_ZEN_API_KEY` environment variable (`.env`, credentials only, never
-committed), everything else from a committed `config.yaml` at the repo root, under a
-top-level `llm_service:` key (sibling keys for other modules' config, e.g. `logging:`,
-are expected as the codebase grows) — every one of those keys must be present, since
-nothing defaults. Passing `config` explicitly — as any consumer's test does — bypasses
-both files entirely, but must still supply every field.
+from whichever `.env` variable `config.yaml`'s `llm_service.api_key_env_var` names
+(credentials only, never committed), everything else from a committed `config.yaml`
+at the repo root, under a top-level `llm_service:` key (sibling keys for other
+modules' config, e.g. `logging:`, are expected as the codebase grows) — every one of
+those keys must be present, since nothing defaults. Passing `config` explicitly — as
+any consumer's test does — bypasses both files entirely, but must still supply every
+field, `api_key_env_var` included (even though nothing reads it once `api_key` is
+already in hand — kept required for uniformity with every other field, per this
+section's own stated reason for that rule).
 
 **Provider selection is a registry lookup, not a hardcoded call.**
 `providers/registry.py` maps a provider name to a *factory function*
@@ -258,8 +267,15 @@ default.
 
 Extends `BaseLLMService` (§8) and implements only `generate()` — `generate_batch()`
 comes free from the base class's bounded-concurrency default. Wraps LangChain's
-`ChatOpenAI` pointed at OpenCode Zen via `base_url`/`api_key`. Registers itself in
-`providers/registry.py` (§6) under the name `"opencode_zen"` at module level.
+`ChatOpenAI` pointed at any OpenAI-compatible `/chat/completions` endpoint via
+`base_url`/`api_key`/`model` — nothing OpenCode-Zen-specific in the class itself.
+Registers itself in `providers/registry.py` (§6) under **both** `"opencode_zen"`
+and, as of 2026-09-17, `"gemini"` — the exact same class and `_build` factory,
+pointed at Gemini's own OpenAI-compatible endpoint
+(`https://generativelanguage.googleapis.com/v1beta/openai`) purely via
+`config.yaml`. Confirms this section's own standing claim: a second
+OpenAI-compatible provider needs a new registry name and a `config.yaml` entry,
+never new code.
 
 - Dispatches `TextRequest` → plain message content; `MultimodalRequest` → LangChain's
   multi-part message content (text block + image blocks).
@@ -445,6 +461,37 @@ provider, not tied to any one of them.
 ---
 
 ## Amendments
+
+- **2026-09-17** — **`api_key_env_var` added to `LLMServiceConfig` (§6); Gemini
+  registered as a second provider (§7).** Surfaced by the first real attempted
+  production use of this module (an experimental LLM-driven track-structure
+  detector) — the default free-tier model (`nemotron-3-ultra-free` via OpenCode
+  Zen) turned out to reject any call from outside the OpenCode app itself
+  (`403 FreeTierError`), unrelated to this module's own code. Pivoting to
+  Gemini's free tier (a standing quota on Flash-class models via a Google AI
+  Studio key, no billing account required) surfaced the actual gap:
+  `factory.py`'s `load_config()` hardcoded reading the credential from
+  `OPEN_CODE_ZEN_API_KEY` specifically, regardless of which provider was
+  configured — harmless while exactly one provider existed, wrong the moment a
+  second one does.
+
+  1. §6 — `LLMServiceConfig` gains `api_key_env_var: str`, no Python default
+     (matching every other field's "config.yaml is the only place a default is
+     declared" rule already stated in this section). `load_config()` reads the
+     `.env` variable *name* from `config.yaml` before reading the credential
+     itself, rather than a literal hardcoded string.
+  2. §7 — `providers/openai_compatible.py` registers its existing, already
+     fully generic `OpenAICompatibleLLMService`/`_build` a second time, under
+     `"gemini"`, pointed at Gemini's own OpenAI-compatible endpoint. No new
+     class, no new file.
+
+  **Treated as an amendment, not a version bump**, on the same basis several
+  other specs in this repo have used: `api_key_env_var` becoming a required
+  field does change what `LLMServiceConfig(...)` accepts, but the *only* real
+  callers — this repo's own `config.yaml` and this module's own test suite —
+  are updated in the same change. `llm_service` has no production caller yet
+  (§1's stated v1 consumer, `familiarity_scorer`, is still unwired), so there
+  is no external/downstream consumer this could break by surprise.
 
 - **2026-08-15** — Two clarifications surfaced during initial implementation, both
   additive (no public signature changed; nothing already built against this spec

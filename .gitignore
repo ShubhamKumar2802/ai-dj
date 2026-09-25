@@ -31,6 +31,8 @@ src/ingestion/cue_derivation/examples/
 src/ingestion/orchestrator/examples/
 src/processing/edge_builder/examples/
 src/processing/path_search/examples/
+src/render/transition_renderer/examples/
+src/render/playlist_renderer/examples/
 src/acquisition/youtube_downloader/examples/
 # spec-kit skills — vendored/generated, not part of this repo's own spec workflow
 .claude/skills/speckit-*/
@@ -39,6 +41,9 @@ src/acquisition/youtube_downloader/examples/
 
 # testing tracks
 /music
+
+# Rendered experiment audio — large binaries, regenerable
+src/experiments/**/outputs/
 
 # macOS
 .DS_Store

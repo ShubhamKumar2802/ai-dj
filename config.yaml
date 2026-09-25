@@ -5,11 +5,18 @@ logging:
   level: INFO
 
 llm_service:
-  provider: opencode_zen
-  # Free-tier model roster rotates — confirm this is still current at
-  # https://opencode.ai/docs/zen/ before relying on it.
-  model: nemotron-3-ultra-free
-  base_url: https://opencode.ai/zen/v1
+  # Was opencode_zen / nemotron-3-ultra-free — that free tier 403s outside the
+  # OpenCode app itself. Switched to Gemini's free tier (2026-09-17), via
+  # Google's own OpenAI-compatible endpoint (no new code needed — see
+  # resources/documentation/common/llm_service/spec.md's 2026-09-17 amendment).
+  # provider: opencode_zen
+  # model: nemotron-3-ultra-free
+  # base_url: https://opencode.ai/zen/v1
+  # api_key_env_var: OPEN_CODE_ZEN_API_KEY
+  provider: gemini
+  model: gemma-4-31b-it  # gemini-2.5-flash deprecated; gemini-3.7-flash free tier is 5 RPM + overloaded
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  api_key_env_var: GEMINI_API_KEY
   max_concurrency: 4
   request_timeout_s: 30
   cache_enabled: true

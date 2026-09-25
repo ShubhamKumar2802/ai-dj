@@ -16,6 +16,7 @@ def make_llm_service_config(tmp_path):
             "model": "big-pickle",
             "base_url": "https://opencode.ai/zen/v1",
             "api_key": "test-key",
+            "api_key_env_var": "TEST_API_KEY",
             "max_concurrency": 2,
             "request_timeout_s": 10,
             "cache_enabled": True,

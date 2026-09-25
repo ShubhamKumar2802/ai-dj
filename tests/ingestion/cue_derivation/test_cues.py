@@ -21,7 +21,7 @@ def test_edm_template_emits_riser_start_when_riser_precedes_grid_start(
         free_intro_end=1.0,
         structure_template="edm",
         hook_in=None,
-        hook_exit=None,
+        hook_exit_candidates=[],
         phrase_grid=[],
         config=CueDerivationConfig(),
     )
@@ -43,7 +43,7 @@ def test_edm_template_emits_intro_end_when_no_riser_precedes_grid_start(
         free_intro_end=4.0,  # equals grid_start, per §3, when no riser precedes it
         structure_template="edm",
         hook_in=None,
-        hook_exit=None,
+        hook_exit_candidates=[],
         phrase_grid=[],
         config=CueDerivationConfig(),
     )
@@ -63,7 +63,7 @@ def test_non_edm_template_emits_hook_in_when_found(make_per_bar_features, make_r
         free_intro_end=4.0,
         structure_template="film",
         hook_in=10.0,
-        hook_exit=None,
+        hook_exit_candidates=[],
         phrase_grid=[],
         config=CueDerivationConfig(),
     )
@@ -85,7 +85,7 @@ def test_non_edm_template_without_hook_in_only_emits_fallback(
         free_intro_end=4.0,
         structure_template="unknown",
         hook_in=None,
-        hook_exit=None,
+        hook_exit_candidates=[],
         phrase_grid=[],
         config=CueDerivationConfig(),
     )
@@ -108,7 +108,7 @@ def test_hard_constraint_drops_non_riser_cue_before_grid_start(
         free_intro_end=1.0,
         structure_template="edm",
         hook_in=None,
-        hook_exit=None,
+        hook_exit_candidates=[],
         phrase_grid=[],
         config=CueDerivationConfig(),
     )
@@ -126,12 +126,54 @@ def test_hook_exit_included_in_cue_outs_when_present(make_per_bar_features, make
         free_intro_end=0.0,
         structure_template="unknown",
         hook_in=None,
-        hook_exit=20.0,
+        hook_exit_candidates=[20.0],
         phrase_grid=[],
         config=CueDerivationConfig(),
     )
 
     assert cue_outs == [Cue(position=20.0, kind="hook_exit", confidence=0.5)]
+
+
+def test_every_hook_exit_candidate_becomes_its_own_cue(make_per_bar_features, make_raw_features):
+    # 2026-09-17 amendment (spec §6) — no single "winner" any more; edge_builder
+    # ranks candidates, this module just hands all of them over.
+    per_bar = make_per_bar_features(n_bars=8, bpm=120.0)
+    raw = make_raw_features(per_bar, bpm=120.0, downbeat_confidence=0.7)
+
+    _, cue_outs = emit_cues(
+        raw,
+        grid_start=0.0,
+        free_intro_end=0.0,
+        structure_template="unknown",
+        hook_in=None,
+        hook_exit_candidates=[20.0, 21.8, 23.6],
+        phrase_grid=[],
+        config=CueDerivationConfig(),
+    )
+
+    assert cue_outs == [
+        Cue(position=20.0, kind="hook_exit", confidence=0.5),
+        Cue(position=21.8, kind="hook_exit", confidence=0.5),
+        Cue(position=23.6, kind="hook_exit", confidence=0.5),
+    ]
+
+
+def test_no_hook_exit_candidates_emits_no_hook_exit_cues(make_per_bar_features, make_raw_features):
+    per_bar = make_per_bar_features(n_bars=8, bpm=120.0)
+    raw = make_raw_features(per_bar, bpm=120.0, downbeat_confidence=0.7)
+
+    _, cue_outs = emit_cues(
+        raw,
+        grid_start=0.0,
+        free_intro_end=0.0,
+        structure_template="unknown",
+        hook_in=None,
+        hook_exit_candidates=[],
+        phrase_grid=[],
+        config=CueDerivationConfig(),
+    )
+
+    assert cue_outs == []
 
 
 def test_time_boxed_fallback_present_past_time_box_bars(make_per_bar_features, make_raw_features):
@@ -147,7 +189,7 @@ def test_time_boxed_fallback_present_past_time_box_bars(make_per_bar_features, m
         free_intro_end=0.0,
         structure_template="unknown",
         hook_in=None,
-        hook_exit=None,
+        hook_exit_candidates=[],
         phrase_grid=phrase_grid,
         config=config,
     )
@@ -168,7 +210,7 @@ def test_no_time_boxed_fallback_when_no_boundary_clears_time_box(
         free_intro_end=0.0,
         structure_template="unknown",
         hook_in=None,
-        hook_exit=None,
+        hook_exit_candidates=[],
         phrase_grid=phrase_grid,
         config=CueDerivationConfig(),
     )
@@ -195,7 +237,7 @@ def test_time_boxed_anchors_to_post_filter_cue_in(make_per_bar_features, make_ra
         free_intro_end=-10.0,  # deliberately before grid_start -> intro_end cue gets filtered out
         structure_template="edm",
         hook_in=None,
-        hook_exit=None,
+        hook_exit_candidates=[],
         phrase_grid=phrase_grid,
         config=CueDerivationConfig(),
     )
