@@ -8,6 +8,7 @@ dependencies = [
     "essentia==2.1b6.dev1389",
     "joblib>=1.5.3",
     "langchain-openai>=1.5.1",
+    "langchain-openrouter>=0.2.9,<0.3",
     "librosa>=0.11.0",
     "numpy>=2.4.6",
     "pydantic>=2.13.4",
@@ -21,6 +22,17 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.2",
+]
+# Sandbox experiments only (src/experiments/); never part of the production install.
+# mlx-whisper is Apple-Silicon-only.
+experiments = [
+    "httpx",
+    "huggingface-hub",
+    "indic-transliteration",
+    "matplotlib>=3.11.2",
+    "mlx-whisper",
+    "rapidfuzz",
+    "ytmusicapi",
 ]
 
 [tool.pytest.ini_options]

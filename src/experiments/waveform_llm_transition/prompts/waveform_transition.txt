@@ -1,0 +1,25 @@
+# prompt_version: waveform_transition_v1
+You are an experienced club DJ. Below are waveform images of two tracks, A and B. Choose where to leave track A and where to enter track B so that the transition from A into B sounds good on a dance floor.
+
+HOW TO READ THE IMAGES
+- Each image is one tile of one track. Tiles are {tile_s:g} s wide and overlap their neighbour by {overlap_s:g} s. Every tile, for both tracks, uses the same horizontal scale and the same height scale, so sizes are directly comparable between A and B.
+- The header line of each image names the track (A or B), its BPM, duration, loudness (integrated LUFS) and which part of the track the tile covers.
+- Three stacked lanes show the energy of three frequency bands over time. LOW (blue) is below {low_hz:g} Hz: kick drum and bass. MID (orange) is {low_hz:g}–{high_hz:g} Hz: vocals, melody, most instruments. HIGH (grey) is above {high_hz:g} Hz: hi-hats, cymbals, air.
+- A thin vertical line marks the start of every bar; a darker line marks every 4th bar (bars 1, 5, 9, ...). Under the lanes, the "bar" row labels bar numbers and the "time" row labels the time in m:ss. Bar numbers are counted from the start of the track.
+- Typical signs: an empty or thin LOW lane means no kick/bass (intro, breakdown, outro); a sudden jump in LOW is a drop or the beat coming in; a full MID lane with little LOW often means vocals over a stripped-back section.
+
+THE TRACKS
+{track_a_facts}
+{track_b_facts}
+
+THE IMAGES, IN ORDER
+{image_list}
+
+WHAT TO RETURN
+- exit_bar_a: the bar number in A where A should end (A plays up to the start of this bar). exit_time_a: that bar's time as m:ss, read off A's time row.
+- entry_bar_b: the bar number in B where B should start playing. entry_time_b: that bar's time as m:ss, read off B's time row.
+- technique: the transition technique you would use at this point: cut, bass_swap, echo_out, filter_fade or other.
+- length_bars: how many bars that transition would last (0 for a straight cut).
+- reasoning: why these two points and this technique, referring to what you see in the lanes.
+- notes_a and notes_b: what you see in each track, section by section, with bar numbers (for example "bars 1-8: no low end, light mids — intro").
+Answer with bar numbers that appear on the images. Do not invent bars beyond the last labelled bar of a track.

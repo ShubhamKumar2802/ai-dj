@@ -1,0 +1,24 @@
+# Your own picks, by ear (e.g. in Mixxx), for the light accuracy check.
+# Times are m:ss into each track. Leave a field null until you've marked it.
+#   exit_a:  where you would leave track A
+#   entry_b: where you would bring track B in
+#   rating:  1-5, how good the LLM's preview.wav sounds
+#   note:    one line on why
+# Re-running the experiment after filling this in re-scores without new LLM calls.
+
+pairs:
+  gwqenR0crHo__RDIRaFGr19s:  # Rock Tha Party -> Marjaani
+    exit_a: null
+    entry_b: null
+    rating: null
+    note: null
+  5AeX7Ddq4ts__Jn5hsfbhWx4:  # Zingaat -> Munni Badnaam Hui
+    exit_a: null
+    entry_b: null
+    rating: null
+    note: null
+  Y7G-tYRzwYY__KxCjVIFxZNo:  # Subha Hone Na De -> Lat Lag Gayee (one-off gold-set pair, run via --config)
+    exit_a: "2:11"   # bar 73, the user's pick: end of the opening full-energy section
+    entry_b: null
+    rating: null
+    note: null

@@ -1,0 +1,31 @@
+# prompt_version: waveform_transition_v2
+You are an experienced DJ building a megamix. Below are waveform images of two tracks, A and B. The megamix plays only a short excerpt of each song, about 30–90 s around its most recognisable, highest-energy part, then moves on. This request is one junction of that megamix: choose where to leave track A and where to enter track B so that the switch from A into B sounds good on a dance floor.
+
+WHERE TO LEAVE A AND ENTER B
+- Leave A right after one of its strong, full-energy sections ends, on a darker 4-bar line. Do not run A into its closing bars: the end of the file is not a mix-out point in a megamix.
+- Enter B at, or a few bars before, its strongest section, where the beat and the main vocal are both in. Skipping B's intro is normal. Choose bar 1 of B only if B opens at full energy.
+
+HOW TO READ THE IMAGES
+- Each image is one tile of one track. Tiles are {tile_s:g} s wide and overlap their neighbour by {overlap_s:g} s. Every tile, for both tracks, uses the same horizontal scale and the same height scale, so sizes are directly comparable between A and B.
+- The header line of each image names the track (A or B), its BPM, duration, loudness (integrated LUFS) and which part of the track the tile covers.
+- Three stacked lanes show the energy of three frequency bands over time. LOW (blue) is below {low_hz:g} Hz: kick drum and bass. MID (orange) is {low_hz:g}–{high_hz:g} Hz: vocals, melody, most instruments. HIGH (grey) is above {high_hz:g} Hz: hi-hats, cymbals, air.
+- A thin vertical line marks the start of every bar; a darker line marks every 4th bar (bars 1, 5, 9, ...). Under the lanes, the "bar" row labels bar numbers and the "time" row labels the time in m:ss. Bar numbers are counted from the start of the track.
+- Typical signs: an empty or thin LOW lane means no kick/bass (intro, breakdown, outro); a sudden jump in LOW is a drop or the beat coming in; a full MID lane with little LOW often means vocals over a stripped-back section.
+- These are mostly Indian film songs. They rarely have the beat-free DJ intros and outros of club tracks, and may stay at full energy for most of their length; a fade at the very end of the file is the song ending, not a section to mix out of. Look instead for where sections change: a dip or rise in LOW, a thinner or fuller MID, a short break.
+- The bar lines can be slightly off the music. When a change in the lanes falls between two bar lines, choose the bar line just before it.
+
+THE TRACKS
+{track_a_facts}
+{track_b_facts}
+
+THE IMAGES, IN ORDER
+{image_list}
+
+WHAT TO RETURN
+- exit_bar_a: the bar number in A where A should end (A plays up to the start of this bar). exit_time_a: the time printed under that bar's line, in m:ss. Pick the bar first, then read its time; do not give the time at which you see the change happen.
+- entry_bar_b: the bar number in B where B should start playing. entry_time_b: the time printed under that bar's line, in m:ss, read the same way.
+- technique: the transition technique you would use at this point: cut, bass_swap, echo_out, filter_fade or other.
+- length_bars: how many bars that transition would last (0 for a straight cut).
+- reasoning: why these two points and this technique, referring to what you see in the lanes.
+- notes_a and notes_b: what you see in each track, section by section, with bar numbers (for example "bars 1-8: no low end, light mids — intro").
+Answer with bar numbers that appear on the images. Do not invent bars beyond the last labelled bar of a track.

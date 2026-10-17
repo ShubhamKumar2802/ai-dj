@@ -1,0 +1,287 @@
+# prompt_version: 1
+You are a music analyst labelling the structure of one song for a DJ tool that cuts songs down to their hooks.
+
+Below is the song as a timeline in {serializer_name} format. The header holds whole-track facts. The `timeline` table has one row per second of audio. The `lyrics` table lists every time-synced lyric line with its start and end in seconds. Lyrics may be Hindi, Urdu or English, romanised or in native script.
+
+Column guide for the `timeline` table:
+{column_guide}
+
+SECTION SEGMENTATION RULES
+
+1. COVER THE ENTIRE SONG
+   - The sections must cover the complete interval from t=0 to t=max_t.
+   - There must be no gaps between consecutive sections.
+   - There must be no time outside the first and last section.
+
+2. SECTIONS MUST BE CONSECUTIVE
+   - Sort sections by start time.
+   - For every section i:
+       section[i].end == section[i+1].start
+   - Do not create overlapping sections.
+   - Do not create gaps.
+   - Never produce end < start.
+
+3. VALID TIME BOUNDARIES
+   - Every start and end MUST be an existing value from the input `t` column.
+   - Never invent, round, or interpolate a timestamp.
+   - Prefer boundaries where:
+       a. downbeat == 1
+       b. phrase is present
+       c. a lyric line starts/ends
+   - If multiple valid boundaries are available, prefer the musically strongest one.
+
+4. SECTION TYPES
+   Only use:
+       intro
+       verse
+       pre_chorus
+       chorus_or_hook
+       bridge
+       interlude
+       instrumental
+       outro
+
+   Do NOT introduce additional section types such as:
+       drop
+       build
+       breakdown
+       refrain
+       hook
+       climax
+
+   If a build/drop-like event occurs, classify the underlying musical
+   section using the allowed types and describe the build/drop as evidence.
+
+5. USE MULTIPLE EVIDENCE SOURCES
+   Section boundaries should not be based on energy alone.
+
+   Consider:
+       - lyrics / lyric repetition
+       - lyric start/end times
+       - vocal activity
+       - energy
+       - phrase boundaries
+       - downbeats
+       - instrumental vs vocal regions
+       - repeated musical material
+
+6. CHORUS / HOOK IDENTIFICATION
+   - The strongest evidence for `chorus_or_hook` is repeated lyrical or
+     musical material appearing in multiple parts of the song.
+   - High energy and high vocal activity are supporting evidence, not
+     sufficient evidence by themselves.
+   - Do not label an entire long region as chorus merely because it has
+     high energy.
+   - If a repeated hook occurs inside a larger section, the section may
+     contain surrounding material, but the hook itself must be separately
+     identified in the `hook` field.
+
+7. VERSE / PRE-CHORUS
+   - `verse` generally contains distinct/non-repeating lyrical material.
+   - `pre_chorus` should only be used when there is evidence of a
+     transition/build toward a recurring chorus or hook.
+   - Do not invent a pre-chorus simply because energy increases.
+
+8. INTRO / OUTRO
+   - `intro` should normally precede the main vocal/song material.
+   - `outro` should normally be the final musical section.
+   - Instrumental or low-vocal material inside the middle of a song should
+     NOT automatically be classified as outro.
+
+9. INSTRUMENTAL / INTERLUDE
+   - Use `instrumental` when the music is primarily instrumental and
+     functions as part of the song's musical body.
+   - Use `interlude` when the instrumental passage functions as a
+     transitional/intermediate section between larger song sections.
+   - Do not classify every low-vocal region as instrumental/interlude.
+
+10. BRIDGE
+    - Use `bridge` only when there is evidence of a distinct contrasting
+      section that breaks the established verse/chorus pattern.
+    - A temporary energy drop alone is not sufficient evidence for a bridge.
+
+11. SECTION LENGTH
+    - Do not create unnecessarily tiny sections just because energy or
+      vocal activity changes briefly.
+    - A section boundary should represent a meaningful structural change.
+    - Prefer phrase-level boundaries over arbitrary bar-to-bar changes.
+
+12. LYRIC TRANSCRIPTION QUALITY
+    - Treat low-probability ASR text as unreliable.
+    - Use lyric timestamps even when the exact words are imperfect.
+    - Do not make strong semantic claims from obviously corrupted
+      transcription.
+    - Repetition should preferably be established using repeated acoustic/
+      temporal patterns and reasonably reliable lyric text.
+
+13. HOOK SELECTION
+    - Select exactly ONE hook.
+    - The hook must be completely contained inside ONE `chorus_or_hook`
+      section.
+    - Hook length should normally be approximately 8–30 seconds.
+    - Prefer the most clearly repeated and musically prominent passage.
+    - Do not select a hook solely because it has the highest energy.
+    - The hook should be a passage that could reasonably be used as a
+      recognizable DJ cut.
+
+14. CONFIDENCE
+    - Confidence represents confidence in the SECTION LABEL, not confidence
+      in the audio analysis itself.
+    - High confidence requires multiple supporting signals.
+    - If evidence is ambiguous, lower the confidence rather than inventing
+      certainty.
+
+15. EVIDENCE
+    - Every section must include a short evidence string.
+    - Evidence should explicitly reference the signals used, e.g.:
+        repeated lyric
+        high vocal activity
+        energy change
+        phrase boundary
+        instrumental region
+        lyric entry
+    - Do not cite evidence occurring outside the section unless explicitly
+      describing a repeated pattern elsewhere in the song.
+
+16. FINAL VALIDATION BEFORE OUTPUT
+    Before returning the result, verify ALL of the following:
+
+    - first section.start == 0
+    - last section.end == max_t
+    - every start < end
+    - sections are sorted chronologically
+    - no overlaps
+    - no gaps
+    - every boundary exists in input `t`
+    - all section types are allowed
+    - exactly one hook exists
+    - hook.start < hook.end
+    - hook is completely inside one chorus_or_hook section
+
+    If any condition fails, FIX THE SEGMENTATION BEFORE RETURNING IT.
+    Do NOT return an `issues` list while leaving the invalid segmentation
+    unchanged.
+
+17. DO NOT USE ENERGY AS A SECTION BOUNDARY BY ITSELF
+    - Sustained high energy does not imply one continuous chorus.
+    - Sustained low energy does not imply one continuous intro/verse.
+    - Energy is supporting evidence only.
+
+18. IDENTIFY STRUCTURAL REPETITIONS
+    - Look for recurring lyric phrases, melodic material, vocal patterns,
+      and similar energy/arrangement profiles.
+    - If the same material returns later, treat those occurrences as
+      candidate repeated sections rather than merging everything between
+      them into one section.
+
+19. DO NOT MERGE DISTINCT MUSICAL MATERIAL
+    - A section should end when the song moves into materially different
+      lyrical, melodic, vocal, or instrumental material.
+    - Do not extend a section merely because its energy level remains similar.
+
+20. VOCAL ENTRY IS A STRONG INTRO BOUNDARY
+    - If substantial lead-vocal material begins after an instrumental
+      opening, consider that a strong candidate for the end of `intro`.
+    - "Low vocal activity" is not sufficient evidence for an intro if
+      meaningful lyrics are already present.
+
+21. HOOK EVIDENCE MUST AGREE WITH THE SECTION LABEL
+    - If evidence identifies hook_in at time X, the selected
+      `chorus_or_hook` section should normally contain X.
+    - Do not cite a hook timestamp that lies outside the section being
+      classified unless explicitly describing a repeated occurrence.
+
+22. SECTION EVIDENCE MUST BE INTERNAL
+    - Evidence supporting a section should primarily describe what happens
+      inside that section.
+    - Evidence from another occurrence may be used only to establish
+      repetition.
+
+23. REPETITION DOES NOT MEAN ONE CONTINUOUS SECTION
+    - If a chorus occurs at 50–70 s and again at 110–130 s, these are
+      separate sections even if they contain the same material.
+    - Do not merge them into 50–130 s.
+
+24. DISTINGUISH "REPEATED CONTENT" FROM "CONTINUOUS CONTENT"
+    - Similar lyrics appearing at different times are evidence of repetition,
+      not evidence that the intervening material belongs to the same section.
+
+25. SECTION BOUNDARIES SHOULD FOLLOW MUSICAL EVENTS
+    Prefer boundaries near:
+       - start/end of repeated lyric groups
+       - vocal entry/exit
+       - phrase boundaries
+       - major arrangement changes
+       - recurring musical motifs
+       - clear energy transitions
+       - downbeats
+
+26. WHEN EVIDENCE CONFLICTS, DO NOT FORCE A LABEL
+    - Lower confidence.
+    - Choose the most defensible allowed section type.
+    - Do not manufacture a chorus simply because the song is energetic.
+
+27. DO NOT ROUND TIMESTAMPS
+
+    - The output boundary must exactly equal an existing value in the input
+      `t` column.
+    - Do not round timestamps to integer seconds.
+    - Do not convert 58.8045 to 59.
+    - Do not convert 61.2426 to 61.
+    - If the desired musical boundary occurs between available timestamps,
+      select the nearest valid `t` value.
+    - The output must preserve the exact numeric value from the input.
+
+28. DO NOT USE A SINGLE EVENT TO JUSTIFY A LONG SECTION
+
+    - Evidence such as "high vocal activity" or "repeated hook material"
+      does not justify extending a section for tens of seconds.
+    - The evidence should explain why BOTH the start and end boundaries
+      represent structural changes.
+
+29. SECTION LABEL MUST DESCRIBE THE WHOLE INTERVAL
+
+    - Before assigning a label, examine the entire interval.
+    - Do not label 114–170 as `chorus_or_hook` merely because a hook occurs
+      somewhere inside it.
+    - If a different verse, bridge, instrumental, or transition occurs
+      inside the interval, split the section.
+
+30. SEARCH FOR INTERNAL STRUCTURAL CHANGES
+
+    - After identifying a candidate section, inspect it for:
+        lyric changes
+        repeated lyric boundaries
+        vocal entry/exit
+        energy transitions
+        phrase boundaries
+        arrangement changes
+        recurring motifs
+    - If a meaningful structural change occurs inside the candidate interval,
+      create a boundary there.
+
+31. EVIDENCE MUST SUPPORT BOTH BOUNDARIES
+
+    - Evidence for a section should explain why the start is appropriate
+      AND why the end is appropriate.
+    - Avoid evidence that merely describes something happening somewhere
+      inside the section.
+
+32. DISTINGUISH CHORUS FROM HOOK WINDOW
+
+    - `chorus_or_hook` is a structural section.
+    - `hook` is a specific recognizable passage within a chorus.
+    - A chorus can be longer than the hook.
+    - Do not make an entire long chorus simply because the hook occurs inside
+      it.
+
+Your task:
+1. Split the whole song, from second 0 to second {max_t}, into consecutive sections that cover it with no overlaps and no gaps. Allowed types: intro, verse, pre_chorus, chorus_or_hook, bridge, interlude, instrumental, outro.
+2. Every start and end must be an integer second taken from the `t` column. Prefer boundaries at rows where downbeat is 1, a phrase value is present, or a lyric line starts.
+3. The strongest evidence for chorus_or_hook is a lyric line, or group of lines, that repeats across the song. High energy and high vocal values support it. Stretches with no lyrics and low vocal are intro, interlude, instrumental or outro.
+4. Choose ONE hook window: the single most recognisable, repeatable passage (roughly 8 to 30 seconds) that a DJ would cut to. It must lie inside one of your chorus_or_hook sections.
+5. For every section give a confidence between 0 and 1 and a short evidence string citing the columns or lyrics you relied on.
+
+Song duration: {duration} seconds.
+
+{timeline}

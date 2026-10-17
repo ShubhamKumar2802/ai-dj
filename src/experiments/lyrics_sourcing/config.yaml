@@ -1,0 +1,60 @@
+# Which implementation each step uses, plus its parameters (spec §3.2).
+# Swapping an implementation = change its `impl:` value. Unknown keys are errors.
+# Relative paths resolve against the repo root (run_experiment.py chdirs there).
+
+outputs_dir: src/experiments/lyrics_sourcing/outputs
+
+ingest:
+  impl: youtube
+  output_dir: music                  # passed to DownloadConfig.output_dir
+
+lyrics:
+  impl: [ytmusic, lrclib]            # fetchers, in priority order; all run (§4.2)
+  cache_dir: .cache/lyrics_sourcing/fetch
+  lrclib_base_url: https://lrclib.net
+  lrclib_user_agent: "ai-dj lyrics_sourcing experiment"
+  lrclib_max_candidates: 3
+  lrclib_min_interval_s: 1.0
+
+transcribe:
+  impl: mlx_whisper
+  model: mlx-community/whisper-large-v3-turbo   # small-mlx hallucinated loops on MU6RWkmDGm4 (spec §4.3)
+  language: hi                       # null = auto-detect (misdetected Hindi as Tamil on MU6RWkmDGm4)
+  models_dir: models/whisper         # weights downloaded here, never to the HF cache
+  cache_dir: .cache/lyrics_sourcing/transcripts
+
+time_match:
+  impl: offset_vote                  # offset_vote | passthrough
+  min_line_chars: 8
+  k_candidates: 3
+  anchor_min_score: 60
+  offset_bin_s: 0.5
+  inlier_tolerance_s: 1.5
+  min_anchorable_lines: 4
+  min_coverage: 0.40
+  max_residual_s: 0.60
+  zero_offset_tolerance_s: 0.50
+  min_transcript_wpm: 20
+  max_line_s: 10.0
+  write_click_track: true
+
+metadata:
+  impl: ingestion_modules
+
+timeline:
+  impl: per_second
+  serializer: toon                   # toon | json
+
+llm:
+  impl: llm_service
+  provider: ollama
+  model: "qwen3.5:9b-mlx"
+  base_url: http://localhost:11434/v1
+  api_key: ollama                    # Ollama ignores it; llm_service requires a non-empty value
+  temperature: 0.2
+  max_tokens: 4096
+  request_timeout_s: 600
+  max_concurrency: 1
+  context_tokens: 16384              # for the token-budget warning only (§4.7)
+  cache_enabled: true
+  cache_dir: .cache/lyrics_sourcing/llm

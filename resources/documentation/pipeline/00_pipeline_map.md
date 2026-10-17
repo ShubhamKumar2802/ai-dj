@@ -69,6 +69,8 @@ Planning would break the "milliseconds, run constantly" property the whole stage
 | Render | `render/transition_renderer` | Done — tier 3 only; 2/4/5 unimplemented | [spec](../render/transition_renderer/spec.md) | [03](03_render_stage.md) |
 | Render | `render/playlist_renderer` | Done (Milestone B) | [spec](../render/playlist_renderer/spec.md) | [03](03_render_stage.md) |
 | — | `experiments/llm_camelot_sequencer` | Sandbox, not production, no spec planned | — | [06](06_experiments_sandbox.md) |
+| — | `experiments/whisper_bakeoff` — gates `ingestion/transcription` | Sandbox, draft spec, not built | [spec](../experiments/whisper_bakeoff/spec.md) | [04](04_transcription.md), [06](06_experiments_sandbox.md) |
+| — | `experiments/lyrics_sourcing` — single-track pipeline: fetch synced lyrics (Whisper validates/falls back) + metadata → TOON timeline → local LLM structure labels | Sandbox, draft spec, not built | [spec](../experiments/lyrics_sourcing/spec.md) | [04](04_transcription.md), [06](06_experiments_sandbox.md) |
 
 ---
 
@@ -146,3 +148,5 @@ happened.
   [05_song_structure.md](05_song_structure.md).
 - The sandboxed experiment that informed several of the decisions above:
   [06_experiments_sandbox.md](06_experiments_sandbox.md).
+- The experiment that decides whether transcription gets built at all:
+  [`experiments/whisper_bakeoff` spec](../experiments/whisper_bakeoff/spec.md).

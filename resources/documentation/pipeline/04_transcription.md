@@ -68,7 +68,10 @@ never silently mix cached output from two different model versions.
 ### 3.2 Model choice
 
 **Local, self-hosted Whisper-family model** (e.g. `faster-whisper`/`whisper.cpp`,
-exact variant to be decided at spec time). Two reasons this is the right family, both
+exact variant to be decided at spec time — note that `faster-whisper` has no Metal backend
+and is CPU-only on Apple Silicon, so `mlx-whisper` is the likelier runtime here; the exact
+model and runtime are the subject of
+[`experiments/whisper_bakeoff`](../experiments/whisper_bakeoff/spec.md)). Two reasons this is the right family, both
 grounded in this project's own history rather than a generic preference:
 
 - **Self-hosted avoids the rate-limit/auth failure this project has already hit once.**
@@ -137,7 +140,18 @@ Nothing in Planning or Render ever touches it — same "no model in the planner"
   This is the single biggest risk to this module's value proposition — if transcription
   quality is poor on this specific repertoire, the repeated-line signal it's meant to
   provide won't be reliable either, and this needs to be measured before real spec work
-  proceeds, not assumed.
+  proceeds, not assumed. **Being measured by
+  [`experiments/whisper_bakeoff`](../experiments/whisper_bakeoff/spec.md)** (draft spec):
+  `large-v3` vs `turbo`, raw mix vs separated vocals, auto vs forced language, scored on
+  hand-labeled chorus windows. Its verdict also answers Q1 (hallucination on instrumental
+  sections) and Q2 (shared canonical decode), and settles the model in §3.2.
+  **Alternative under test:**
+  [`experiments/lyrics_sourcing`](../experiments/lyrics_sourcing/spec.md) (draft spec)
+  is a single-track pipeline that fetches human-written synced lyrics (YouTube Music,
+  LRCLIB) first, uses a local Whisper transcript only to validate/correct their timing, and
+  falls back to the transcript when nothing usable is fetched. A later multi-track run of
+  the same pipeline (its §9 Q6) is what would justify amending this proposal to
+  fetch-first, with Whisper as validator and fallback.
 - **Q5 — Cache size at scale.** `feature_extractor`'s own spec has an open, unresolved
   question about JSON cache file size at scale for its own per-bar chroma data; full-track
   line-level transcripts add another data volume to the same concern.
@@ -146,8 +160,9 @@ Nothing in Planning or Render ever touches it — same "no model in the planner"
 
 ## 5. Path to a real spec
 
-Once Q1–Q5 have at least provisional answers (particularly Q4 — a quick manual spot-check
-against a handful of real Bollywood tracks is worth doing before writing a formal spec),
+Once Q1–Q5 have at least provisional answers (particularly Q4 — the
+[`whisper_bakeoff`](../experiments/whisper_bakeoff/spec.md) experiment is that spot-check,
+and its go/no-go verdict gates this whole promotion),
 this file's content promotes into `resources/documentation/ingestion/transcription/spec.md`
 via the `write-spec` skill, following this repo's normal naming/storage/amendment
 conventions (`resources/documentation/README.md`). At that point this file shrinks to a

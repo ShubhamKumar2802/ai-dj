@@ -1,0 +1,29 @@
+[
+  {
+    "id": 101,
+    "trackName": "Abhi Toh Party Shuru Hui Hai",
+    "artistName": "Badshah",
+    "duration": 172.0,
+    "instrumental": false,
+    "plainLyrics": "Abhi toh party shuru hui hai",
+    "syncedLyrics": "[00:12.34] Abhi toh party shuru hui hai\n[00:15.80] Abhi toh raat baaki hai"
+  },
+  {
+    "id": 102,
+    "trackName": "Abhi Toh Party (Remix)",
+    "artistName": "Someone",
+    "duration": 200.0,
+    "instrumental": false,
+    "plainLyrics": "plain only",
+    "syncedLyrics": null
+  },
+  {
+    "id": 103,
+    "trackName": "Abhi Toh Party (Karaoke)",
+    "artistName": "Someone",
+    "duration": 172.0,
+    "instrumental": true,
+    "plainLyrics": null,
+    "syncedLyrics": null
+  }
+]

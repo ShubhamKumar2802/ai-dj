@@ -1,0 +1,35 @@
+# prompt_version: waveform_transition_v6
+You are an experienced DJ building a megamix. Below are waveform images of two tracks, A and B. The megamix plays only a short excerpt of each song, about 30–90 s around its most recognisable, highest-energy part, then moves on. This request is one junction of that megamix: choose where to leave track A and where to enter track B so that the switch from A into B sounds good on a dance floor.
+
+WHERE TO LEAVE A AND ENTER B
+- What counts as a section change: a breakdown, dip, drop or gap that lasts at least 2 bars. Ignore any dip shorter than one bar: that is a drum fill or a stop, not a section change. This applies to every rule below and to your notes.
+- A has been playing from its start. Leave A at the FIRST point where its opening full-energy section ends: the first breakdown, dip or drop in the LOW lane after the beat is in that lasts at least 2 bars. Choose that first point, not a later one. Do not run A into its closing bars: the end of the file is not a mix-out point in a megamix.
+- Leave on the darker 4-bar line just before the change. If A's energy starts to thin, leave on the 4-bar line before the thinning begins, not where it has already thinned.
+- Enter B at, or a few bars before, its strongest section, where the beat and the main vocal are both in. Skipping B's intro is normal. Choose bar 1 of B only if B opens at full energy.
+- The most recognisable part of a song is usually a section whose shape comes back two or three times across the track, not just the loudest stretch.
+- Check the 16 bars after your entry point in B: if B's LOW lane drops out or B breaks down for 2 bars or more within them, choose a later entry, after the break.
+
+HOW TO READ THE IMAGES
+- Each image is one tile of one track. Tiles are {tile_s:g} s wide and overlap their neighbour by {overlap_s:g} s. Every tile, for both tracks, uses the same horizontal scale and the same height scale, so sizes are directly comparable between A and B.
+- The header line of each image names the track (A or B), its BPM, duration, loudness (integrated LUFS) and which part of the track the tile covers.
+- Three stacked lanes show the loudness of three frequency bands over time, averaged over {smooth_beats:g} beat(s). Each lane is drawn symmetrically about its centre line: the distance from the centre line (up and down alike) is that band's level on a {range_db:g} dB scale shared by both tracks, with the lane's top and bottom edges at the pair's loudest level for that band. A lane showing only its centre line means that band is more than {range_db:g} dB below that level. LOW (blue) is below {low_hz:g} Hz: kick drum and bass. MID (orange) is {low_hz:g}–{high_hz:g} Hz: vocals, melody, most instruments. HIGH (grey) is above {high_hz:g} Hz: hi-hats, cymbals, air.
+- A thin vertical line marks the start of every bar; a darker line marks every 4th bar (bars 1, 5, 9, ...). Under the lanes, the "bar" row labels bar numbers and the "time" row labels the time in m:ss. Bar numbers are counted from the start of the track.
+- Typical signs: an empty or thin LOW lane means no kick/bass (intro, breakdown, outro); a sudden jump in LOW is a drop or the beat coming in; a full MID lane with little LOW often means vocals over a stripped-back section.
+- These are mostly Indian film songs. They rarely have the beat-free DJ intros and outros of club tracks, and may stay at full energy for most of their length; a fade at the very end of the file is the song ending, not a section to mix out of. Look instead for where sections change: a dip or rise in LOW, a thinner or fuller MID, a short break.
+- The bar lines can be slightly off the music. When a change in the lanes falls between two bar lines, choose the bar line just before it.
+
+THE TRACKS
+{track_a_facts}
+{track_b_facts}
+
+THE IMAGES, IN ORDER
+{image_list}
+
+WHAT TO RETURN
+- exit_bar_a: the bar number in A where A should end (A plays up to the start of this bar). exit_time_a: the time printed under that bar's line, in m:ss. Pick the bar first, then read its time; do not give the time at which you see the change happen.
+- entry_bar_b: the bar number in B where B should start playing. entry_time_b: the time printed under that bar's line, in m:ss, read the same way.
+- technique: the transition technique you would use at this point: cut, bass_swap, echo_out, filter_fade or other.
+- length_bars: how many bars that transition would last (0 for a straight cut).
+- reasoning: why these two points and this technique, referring to what you see in the lanes.
+- notes_a and notes_b: go through every tile of the track in order and list every visible change that lasts at least 2 bars, meaning any dip, gap or jump in any lane, with the bar where it starts (leave out sub-bar dips such as drum fills) (for example "bars 1-8: no low end, light mids — intro; bar 9: LOW jumps in; bars 13-16: LOW gap"). Film-song sections usually last 8 to 32 bars, so a single stretch of 40 or more bars means you have missed changes. Work these notes out before choosing the exit and entry bars.
+Answer with bar numbers that appear on the images. Do not invent bars beyond the last labelled bar of a track.

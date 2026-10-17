@@ -1,0 +1,43 @@
+# waveform_llm_transition experiment (openspec change: waveform-llm-transition).
+# Unknown keys are errors. Relative paths resolve against the repo root
+# (run_experiment.py chdirs there).
+
+outputs_dir: src/experiments/waveform_llm_transition/outputs
+ground_truth: src/experiments/waveform_llm_transition/ground_truth.yaml
+
+pairs:
+  - a:
+      name: Rock Tha Party
+      path: "music/ROCK THA PARTY Full Video Song ｜ ROCKY HANDSOME ｜ John Abraham, Nora Fatehi ｜ BOMBAY ROCKERS [gwqenR0crHo].mp3"
+    b:
+      name: Marjaani
+      path: "music/Marjaani Full Video Song Billu ｜ Shahrukh Khan ｜ Kareena Kapoor [RDIRaFGr19s].mp3"
+  - a:
+      name: Zingaat
+      path: "music/Zingaat with English Subtitles ｜ Sairat ｜ Rinku Rajguru & Akash Thosar ｜ Ajay Atul [5AeX7Ddq4ts].mp3"
+    b:
+      name: Munni Badnaam Hui
+      path: "music/Munni Badnaam Hui Full Song ｜ Feat. Malaika Arora ｜ Dabangg ｜ Salman Khan [Jn5hsfbhWx4].mp3"
+
+bands:
+  low_hz: 200        # low lane: below this
+  high_hz: 2500      # high lane: above this; mid lane is between
+  filter_order: 4
+  range_db: 24       # lane height = band level in a 24 dB window below the pair's loudest level
+  smooth_beats: 1    # average the envelope over 1 beat, so sections outweigh per-kick spikes
+
+tiles:
+  tile_s: 60
+  overlap_s: 8
+  px_per_s: 25       # 60 s tile -> 1500 px wide
+  height_px: 600
+
+preview:
+  pre_s: 20          # audio of A before the cut
+  post_s: 20         # audio of B after the cut
+
+llm:
+  model: null        # null = the repo's llm_service model (config.yaml); must accept images
+  temperature: 0.2
+  timeout_s: 300     # per-request limit, seconds
+  max_tokens: 32768  # whole reply incl. reasoning tokens; null = no cap (provider's own limit)

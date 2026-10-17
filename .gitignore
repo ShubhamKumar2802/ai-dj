@@ -42,8 +42,11 @@ src/acquisition/youtube_downloader/examples/
 # testing tracks
 /music
 
-# Rendered experiment audio — large binaries, regenerable
-src/experiments/**/outputs/
+# Downloaded model weights (Whisper, Ollama) — large, regenerable
+/models/
+
+# Generated outputs (rendered audio, reports, plots) in any sub-dir — large, regenerable
+outputs/
 
 # macOS
 .DS_Store

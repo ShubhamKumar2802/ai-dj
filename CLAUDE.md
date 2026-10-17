@@ -29,12 +29,14 @@ When a commit is needed, write the commit message (and summarize what it would c
 
 ## Development workflow: spec-driven
 
-This project is spec-driven. Before implementing any module, write or update its spec under `resources/documentation/` (sub-folders per component/layer, added as needed — see `resources/documentation/README.md`). The spec is the single source of truth: code implements the spec, not the reverse.
+This project is spec-driven. The spec is the single source of truth: code implements the spec, not the reverse.
 
 - No implementation without a spec to implement.
 - If behavior needs to change — whether the change is decided before coding or discovered during/after implementation (code review, bug fix, design rethink) — edit the spec first, then bring the code in line. Never let code and spec drift silently.
 
-Naming, storage, and amendment/versioning rules: see `resources/documentation/README.md`, or invoke the `write-spec` skill.
+**New work uses [OpenSpec](https://github.com/Fission-AI/OpenSpec)** (`openspec/`, config in `openspec/config.yaml`). Start a change with `/opsx:propose`, implement with `/opsx:apply`, and close it with `/opsx:archive` (also `/opsx:explore`, `/opsx:update`, `/opsx:sync`). Current specs live in `openspec/specs/`; in-flight changes in `openspec/changes/`.
+
+**Legacy specs** under `resources/documentation/` (written before the switch) stay where they are and keep their old workflow: when amending one of those, follow `resources/documentation/README.md` / the `write-spec` skill rather than migrating it. Don't write new specs there.
 
 ## Intended architecture
 

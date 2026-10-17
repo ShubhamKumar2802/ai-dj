@@ -13,13 +13,19 @@ llm_service:
   # model: nemotron-3-ultra-free
   # base_url: https://opencode.ai/zen/v1
   # api_key_env_var: OPEN_CODE_ZEN_API_KEY
-  provider: gemini
-  model: gemma-4-31b-it  # gemini-2.5-flash deprecated; gemini-3.7-flash free tier is 5 RPM + overloaded
-  base_url: https://generativelanguage.googleapis.com/v1beta/openai
-  api_key_env_var: GEMINI_API_KEY
+  # OpenRouter, via LangChain's ChatOpenRouter (openspec: llm-service/openrouter-provider).
+  # Any OpenRouter model id works; needs OPENROUTER_API_KEY in .env.
+  provider: openrouter
+  model: nvidia/nemotron-3.5-super-vl:free  # reasoning + vision; reasons ~4k+ tokens before answering
+  base_url: https://openrouter.ai/api/v1
+  api_key_env_var: OPENROUTER_API_KEY
+  # provider: gemini
+  # model: gemma-4-31b-it  # gemini-2.5-flash deprecated; gemini-3.7-flash free tier is 5 RPM + overloaded
+  # base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  # api_key_env_var: GEMINI_API_KEY
   max_concurrency: 4
-  request_timeout_s: 30
-  cache_enabled: true
+  request_timeout_s: 300  # was 30 — too short for a reasoning model on a multi-image prompt
+  cache_enabled: false
   cache_dir: .cache/llm_service
 
 feature_extractor:

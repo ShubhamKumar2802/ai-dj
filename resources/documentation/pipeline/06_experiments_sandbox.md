@@ -108,7 +108,26 @@ duplicated here.
 
 ---
 
-## 6. Disposition
+## 6. Sibling experiment: `whisper_bakeoff`
+
+A second sandbox experiment, unlike the one above, **does** have a spec, because its
+result gates a production spec rather than testing a design argument:
+[`experiments/whisper_bakeoff`](../experiments/whisper_bakeoff/spec.md) (draft) compares
+Whisper `large-v3` vs `turbo`, raw mix vs separated vocals, and auto vs forced language on
+hand-labeled Bollywood chorus windows. Its go/no-go verdict decides whether
+[04_transcription.md](04_transcription.md) is promoted to a real spec. Same sandbox
+rules apply: nothing in production imports it, and its results are informative, not
+authoritative.
+
+A third, [`experiments/lyrics_sourcing`](../experiments/lyrics_sourcing/spec.md) (draft),
+is a single-track, end-to-end pipeline with swappable steps: fetch time-synced lyrics
+(Whisper validates their timing, and is the source of truth only when no usable lyrics are
+found), pull all built-module metadata, flatten it into a per-second TOON timeline, and ask a
+local Ollama LLM to label song structure. Same sandbox rules.
+
+---
+
+## 7. Disposition
 
 Stays sandboxed. No production code path calls into
 `src/experiments/llm_camelot_sequencer/`, and none should — its value is as a controlled

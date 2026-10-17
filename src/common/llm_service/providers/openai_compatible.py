@@ -3,14 +3,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, TypeVar
 
 from langchain_core.exceptions import OutputParserException
-from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ValidationError
 
 from common.llm_service.base import BaseLLMService
 from common.llm_service.errors import LLMProviderError, LLMValidationError
+from common.llm_service.providers._messages import to_messages
 from common.llm_service.providers.registry import register_provider
-from common.llm_service.schema import ImageInput, MultimodalRequest, TextRequest
+from common.llm_service.schema import MultimodalRequest, TextRequest
 
 if TYPE_CHECKING:
     from common.llm_service.factory import LLMServiceConfig
@@ -81,7 +81,7 @@ class OpenAICompatibleLLMService(BaseLLMService):
         structured_llm = llm.with_structured_output(output_schema, method="function_calling")
 
         try:
-            result = structured_llm.invoke(_to_messages(request))
+            result = structured_llm.invoke(to_messages(request))
         except _VALIDATION_ERRORS as exc:
             raise LLMValidationError(str(exc)) from exc
         except Exception as exc:  # network/API failures, every shape the SDK raises
@@ -92,23 +92,6 @@ class OpenAICompatibleLLMService(BaseLLMService):
                 f"expected {output_schema.__name__}, got {type(result).__name__}"
             )
         return result
-
-
-def _to_messages(request: TextRequest | MultimodalRequest) -> list[BaseMessage]:
-    if isinstance(request, TextRequest):
-        return [HumanMessage(content=request.prompt)]
-
-    content: list[dict] = [{"type": "text", "text": request.prompt}]
-    content.extend(_image_block(image) for image in request.images)
-    return [HumanMessage(content=content)]
-
-
-def _image_block(image: ImageInput) -> dict:
-    if image.source == "url":
-        url = image.data
-    else:
-        url = f"data:{image.mime_type};base64,{image.data}"
-    return {"type": "image_url", "image_url": {"url": url}}
 
 
 def _build(config: LLMServiceConfig) -> OpenAICompatibleLLMService:

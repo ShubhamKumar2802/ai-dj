@@ -1,0 +1,9 @@
+{
+  "lyrics": [
+    {"text": "Abhi toh raat baaki hai", "start_time": 15800, "end_time": 19000, "id": 2},
+    {"text": "Abhi toh party shuru hui hai", "start_time": 12340, "end_time": 15800, "id": 1},
+    {"text": "", "start_time": 19000, "end_time": 21000, "id": 3}
+  ],
+  "source": "Source: LyricFind",
+  "hasTimestamps": true
+}

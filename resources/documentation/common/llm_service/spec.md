@@ -277,6 +277,15 @@ pointed at Gemini's own OpenAI-compatible endpoint
 OpenAI-compatible provider needs a new registry name and a `config.yaml` entry,
 never new code.
 
+**Exception (2026-10-16):** a provider reached through its *own* LangChain
+integration class, rather than `ChatOpenAI` pointed at an OpenAI-compatible
+endpoint, gets its own module under `providers/`. The one such provider so far is
+`"openrouter"` (`providers/openrouter.py`, `OpenRouterLLMService` wrapping
+`langchain_openrouter.ChatOpenRouter`). Its behaviour is specified in OpenSpec, not
+here: `openspec/specs/llm-service/openrouter-provider/` (change archived as
+`openspec/changes/archive/2026-10-17-add-openrouter-provider/`). Request → LangChain
+message conversion is shared by both providers via `providers/_messages.py`.
+
 - Dispatches `TextRequest` → plain message content; `MultimodalRequest` → LangChain's
   multi-part message content (text block + image blocks).
 - Uses `with_structured_output(output_schema, method="function_calling")` per call so
@@ -414,8 +423,13 @@ src/common/llm_service/
     __init__.py                        # imports every built-in provider module,
                                         # registering each as a side effect (§6)
     registry.py                         # register_provider(), get_provider_factory() (§6)
+    _messages.py                         # to_messages(): request -> LangChain
+                                          # messages, shared by every provider
     openai_compatible.py                 # OpenAICompatibleLLMService (§7);
                                           # registers itself as "opencode_zen"
+                                          # and "gemini"
+    openrouter.py                         # OpenRouterLLMService (§7 exception);
+                                          # registers itself as "openrouter"
 
 tests/common/llm_service/
   test_base.py             # default generate_batch() against a fake generate()
@@ -430,6 +444,8 @@ tests/common/llm_service/
                                         # and duplicate-registration errors
     test_openai_compatible.py          # OpenAICompatibleLLMService against
                                         # fixture/recorded responses
+    test_messages.py                    # shared request -> message conversion
+    test_openrouter.py                  # OpenRouterLLMService, ChatOpenRouter mocked
 ```
 
 Concrete provider implementations live under `providers/`; everything else at the top
@@ -461,6 +477,21 @@ provider, not tied to any one of them.
 ---
 
 ## Amendments
+
+- **2026-10-16** — **OpenRouter registered as a third built-in provider via its own
+  LangChain integration (§7 exception, §11).** Gemini's free tier returned repeated
+  `503 high demand` during the `waveform-llm-transition` experiment, and its default
+  model read images poorly. `providers/openrouter.py` adds `OpenRouterLLMService`
+  wrapping `langchain_openrouter.ChatOpenRouter` (new dependency
+  `langchain-openrouter`), registered as `"openrouter"` and selected only via
+  `config.yaml`. This is a deliberate exception to §7's "never new code": OpenRouter
+  could also be reached through `ChatOpenAI` + `base_url`, but its dedicated
+  integration was chosen explicitly. The message conversion that lived privately in
+  `openai_compatible.py` moved, unchanged, to the shared `providers/_messages.py`.
+  The provider's own behaviour is specified in OpenSpec
+  (`llm-service/openrouter-provider`), not in this file. **Treated as an amendment**:
+  purely additive. `LLMService`, `LLMServiceConfig`, `get_llm_service()` and the
+  request schemas are unchanged, and the active provider stays Gemini.
 
 - **2026-09-17** — **`api_key_env_var` added to `LLMServiceConfig` (§6); Gemini
   registered as a second provider (§7).** Surfaced by the first real attempted
