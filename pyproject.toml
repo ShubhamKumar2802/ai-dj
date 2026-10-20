@@ -26,6 +26,7 @@ dev = [
 # Sandbox experiments only (src/experiments/); never part of the production install.
 # mlx-whisper is Apple-Silicon-only.
 experiments = [
+    "demucs>=4.0.1",
     "httpx",
     "huggingface-hub",
     "indic-transliteration",

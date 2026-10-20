@@ -1,0 +1,11 @@
+# Your listening ratings for each output track, by ear.
+#   rating: 1-5, how good the transition sounds
+#   note:   one line on why
+# Leave a field null until you've listened. Re-running the experiment after filling this in
+# updates summary.md without separating again (stems are cached).
+
+pairs:
+  Y7G-tYRzwYY__KxCjVIFxZNo:  # Subha Hone Na De -> Lat Lag Gayee
+    cut:       {rating: null, note: null}
+    overlap:   {rating: null, note: null}
+    bass_swap: {rating: null, note: "liked this one most; what I was expecting"}

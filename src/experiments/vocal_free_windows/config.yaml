@@ -1,0 +1,35 @@
+# vocal_free_windows experiment (openspec change: vocal-free-transition-windows).
+# Unknown keys are errors. Relative paths resolve against the repo root
+# (run_experiment.py chdirs there). `--a/--b` on the command line replace `pair`.
+
+outputs_dir: src/experiments/vocal_free_windows/outputs
+ground_truth: src/experiments/vocal_free_windows/ground_truth.yaml
+
+# The adhoc pair from waveform_llm_transition/outputs/adhoc (live test input).
+pair:
+  a:
+    name: Subha Hone Na De
+    path: "music/gold-set/＂Subha Hone Na De Full Song＂｜ Desi Boyz ｜ Akshay Kumar ,John Abraham ｜ Pritam ｜  Mika Singh, Kumaar [Y7G-tYRzwYY].mp3"
+  b:
+    name: Lat Lag Gayee
+    path: "music/Lat Lag Gayee Lyrical - Race 2 ｜ Saif Ali Khan, Jacqueline ｜ Benny Dayal, Shalmali ｜ Pritam ｜ Party [KxCjVIFxZNo].mp3"
+
+separator:
+  model: htdemucs
+  shifts: 1
+  overlap: 0.25
+  device: auto       # auto = mps if available, else cpu
+  cache_dir: .cache/vocal_free_windows
+
+windows:
+  threshold_db: 18   # vocal-free: below the track's p95 bar level minus this
+  floor_dbfs: -60    # ...or below this absolute level (silent stem)
+  min_bars: 2        # a shorter run is a breath, not a window
+
+exit_after_bar: 32   # A's exit window must start after this bar
+
+render:
+  overlap_bars: 2
+  bass_swap_bars: 16 # must be even: the bass swaps on the halfway downbeat
+  crossover_hz: 200
+  match_loudness: true
